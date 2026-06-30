@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { CalendarIcon, CheckIcon } from './icons/ui'
+import { CalendarIcon, CheckIcon, SparkleIcon } from './icons/ui'
 import { AmountField } from './Field'
+import { Button } from './Button'
 import { ImpactReveal } from './ImpactReveal'
 import { Spinner } from './Spinner'
 import { ScanIcon } from './icons/Scan'
@@ -8,6 +9,7 @@ import { resolveCategoryIcon } from '../config/icons'
 import { formatDate, formatCurrency, titleCase } from '../lib/format'
 import { todayISO } from '../lib/summary'
 import { cn } from '../lib/cn'
+import { findSavings, type SavingsIdea } from '../services/savings'
 import type { HouseImpactInput } from '../lib/money'
 import type { CategoryType } from '../types'
 import type { ScanReceiptResult } from '../services/receipt'
@@ -20,7 +22,7 @@ export type QuickAddCategory = {
   type: CategoryType
 }
 
-export type QuickAddInput = { amount: number; categoryId: string; date: string; goalId?: string }
+export type QuickAddInput = { amount: number; categoryId: string; date: string; goalId?: string; note?: string }
 
 export type QuickAddProps = {
   categories: QuickAddCategory[]
@@ -34,6 +36,9 @@ export type QuickAddProps = {
   savingsGoals?: Array<{ id: string; name: string }>
   onLog: (input: QuickAddInput) => Promise<void>
   autoFocus?: boolean
+  // A short summary of recent spending, so the savings tip after logging Other or Dining
+  // is grounded in what the household actually buys.
+  trendContext?: string
   // Optional receipt scan, off unless settings.receiptScanProvider is set.
   scanEnabled?: boolean
   onScanImage?: (input: { imageBase64: string; mediaType: string }) => Promise<ScanReceiptResult>
@@ -49,6 +54,13 @@ const SUPPORTED_TYPES: Record<string, true> = {
   'image/webp': true,
 }
 
+// Other and Dining are too vague to learn from on their own, so they ask for a short
+// description, which then powers an informed way to save.
+function needsDescription(category: QuickAddCategory): boolean {
+  const name = category.name.toLowerCase()
+  return category.type === 'variable' && (name === 'other' || name === 'dining')
+}
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -62,12 +74,10 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
-// The home logging surface, the most important flow in the app. Type an amount, then
-// tap a category tile and it logs in one motion: no separate submit button. The tiles
-// stay quiet until an amount is entered, then light up as the thing to tap. After a
-// discretionary log the invest-instead impact appears as a brief, honest flourish; a
-// necessary expense or a savings entry just confirms calmly. Receipt scanning, when
-// enabled, only pre-fills the amount; it never auto-logs.
+// The home logging surface, the most important flow in the app. Type an amount, then tap
+// a category tile and it logs in one motion. Other and Dining first ask for a short
+// description, then surface an informed way to save grounded in our recent spending. After
+// a discretionary log the invest-instead impact appears as a brief, honest flourish.
 export function QuickAdd({
   categories,
   annualReturn,
@@ -76,6 +86,7 @@ export function QuickAdd({
   savingsGoals = [],
   onLog,
   autoFocus = true,
+  trendContext,
   scanEnabled = false,
   onScanImage,
   className,
@@ -87,53 +98,112 @@ export function QuickAdd({
   const [savingId, setSavingId] = useState<string | null>(null)
   const [errored, setErrored] = useState(false)
   const [result, setResult] = useState<Result | null>(null)
+  const [pending, setPending] = useState<QuickAddCategory | null>(null)
+  const [note, setNote] = useState('')
+  const [tipState, setTipState] = useState<'idle' | 'loading' | 'done'>('idle')
+  const [tipIdeas, setTipIdeas] = useState<SavingsIdea[]>([])
   const [scanning, setScanning] = useState(false)
   const [scanNotice, setScanNotice] = useState<ScanNotice>(null)
   const [entryKey, setEntryKey] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dateInputRef = useRef<HTMLInputElement>(null)
+  const noteInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (showDate) dateInputRef.current?.focus()
   }, [showDate])
-
-  // The just-logged confirmation clears itself, holding a beat longer for the
-  // discretionary impact reveal so it can be read.
   useEffect(() => {
-    if (!result) return
+    if (pending) noteInputRef.current?.focus()
+  }, [pending])
+
+  // The just-logged confirmation clears itself after a beat, but holds while a savings tip
+  // is loading or shown (Other and Dining) so it can be read and acted on. A described log
+  // whose tip never arrives (for example a missing key) falls through and clears, so a bare
+  // confirmation is never stranded.
+  useEffect(() => {
+    if (!result || tipState === 'loading' || tipIdeas.length > 0) return
     const ms = result.type === 'variable' ? 4500 : 2000
     const id = window.setTimeout(() => setResult(null), ms)
     return () => window.clearTimeout(id)
-  }, [result])
+  }, [result, tipState, tipIdeas])
 
   const amountValue = Number.parseFloat(amount)
   const hasAmount = Number.isFinite(amountValue) && amountValue > 0
   const saving = savingId != null
   const canLog = hasAmount && !saving
 
-  async function handlePick(category: QuickAddCategory) {
+  function resetTransient() {
+    if (errored) setErrored(false)
+    if (result) setResult(null)
+    if (scanNotice) setScanNotice(null)
+    if (pending) setPending(null)
+    if (note) setNote('')
+    if (tipState !== 'idle') setTipState('idle')
+    if (tipIdeas.length) setTipIdeas([])
+  }
+
+  function handlePick(category: QuickAddCategory) {
     if (!canLog) return
+    if (needsDescription(category)) {
+      setNote('')
+      setPending(category)
+      return
+    }
+    void logWith(category, '')
+  }
+
+  async function logWith(category: QuickAddCategory, noteText: string) {
+    if (!hasAmount || saving) return
     const isSavings = category.type === 'savings'
     const goal = isSavings ? savingsGoals[0] : undefined
+    const trimmed = noteText.trim()
+    const loggedAmount = amountValue
     setSavingId(category.id)
     setErrored(false)
     try {
-      await onLog({
-        amount: amountValue,
-        categoryId: category.id,
-        date,
-        goalId: goal?.id,
+      await onLog({ amount: loggedAmount, categoryId: category.id, date, goalId: goal?.id, note: trimmed || undefined })
+      setResult({
+        amount: loggedAmount,
+        categoryName: category.name,
+        type: category.type,
+        goalName: goal?.name,
       })
-      setResult({ amount: amountValue, categoryName: category.name, type: category.type, goalName: goal?.name })
       setAmount('')
       setDate(today)
       setShowDate(false)
       setScanNotice(null)
+      setPending(null)
+      setNote('')
+      setTipIdeas([])
+      setTipState('idle')
       setEntryKey((key) => key + 1)
+      if (needsDescription(category)) void fetchTip(category, trimmed, loggedAmount)
     } catch {
       setErrored(true)
     } finally {
       setSavingId(null)
+    }
+  }
+
+  // After a described expense, ask for an informed way to save on things like it, grounded
+  // in our recent spending. Silent on failure so a missing key never blocks logging.
+  async function fetchTip(category: QuickAddCategory, noteText: string, loggedAmount: number) {
+    setTipState('loading')
+    try {
+      const ideas = await findSavings({
+        target: {
+          name: noteText || titleCase(category.name),
+          category: titleCase(category.name),
+          amount: loggedAmount,
+          cadence: 'once',
+        },
+        context: trendContext,
+      })
+      setTipIdeas(ideas.slice(0, 2))
+      setTipState('done')
+    } catch {
+      setTipIdeas([])
+      setTipState('idle')
     }
   }
 
@@ -163,6 +233,7 @@ export function QuickAdd({
   }
 
   const showImpact = result != null && result.type === 'variable'
+  const showTip = tipState === 'loading' || tipIdeas.length > 0
 
   return (
     <div className={cn('flex flex-col gap-4', className)}>
@@ -172,9 +243,7 @@ export function QuickAdd({
           value={amount}
           onValueChange={(next) => {
             setAmount(next)
-            if (errored) setErrored(false)
-            if (result) setResult(null)
-            if (scanNotice) setScanNotice(null)
+            resetTransient()
           }}
           autoFocus={autoFocus}
           ariaLabel="Amount"
@@ -246,8 +315,8 @@ export function QuickAdd({
         </p>
       )}
 
-      {/* Just-logged confirmation. Discretionary spend earns the full invest-instead
-          reveal; a necessary expense or a savings entry confirms calmly. */}
+      {/* Just-logged confirmation: the invest-instead reveal for discretionary spend, and
+          for a described Other or Dining expense an informed way to save. */}
       {result && (
         <div aria-live="polite" className="flex flex-col gap-3 motion-safe:animate-[pop-in_var(--dur)_var(--ease-spring)]">
           <p className="flex items-center justify-center gap-1.5 text-callout text-positive-strong">
@@ -273,33 +342,106 @@ export function QuickAdd({
               className="origin-top"
             />
           )}
+          {showTip && (
+            <div className="rounded-lg border border-line bg-surface-2 p-3.5">
+              <div className="flex items-center gap-1.5 text-accent-strong">
+                {tipState === 'loading' ? (
+                  <Spinner size={14} label="Finding a way to save" />
+                ) : (
+                  <SparkleIcon size={14} aria-hidden="true" />
+                )}
+                <span className="text-caption font-semibold uppercase tracking-wide">
+                  {tipState === 'loading' ? 'Finding a way to save' : 'A way to save'}
+                </span>
+              </div>
+              {tipIdeas.map((idea, index) => (
+                <div key={index} className="mt-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-callout font-medium text-ink">{idea.title}</span>
+                    {idea.estMonthly > 0 && (
+                      <span className="tnum shrink-0 rounded-pill bg-positive/12 px-2 py-0.5 text-caption font-semibold text-positive-strong">
+                        {formatCurrency(idea.estMonthly, { cents: false })}/mo
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-caption leading-relaxed text-ink-2">{idea.detail}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Category tiles. Quiet until an amount is entered, then the thing to tap. */}
-      <div role="group" aria-label="Log to a category" className="grid grid-cols-3 gap-2.5">
-        {categories.map((category) => (
-          <CategoryTile
-            key={category.id}
-            category={category}
-            disabled={!canLog}
-            saving={savingId === category.id}
-            onSelect={() => handlePick(category)}
+      {pending ? (
+        /* Other and Dining ask for a short description before logging, so the savings
+           tip and our trends have something to learn from. */
+        <div className="flex flex-col gap-3 motion-safe:animate-[pop-in_var(--dur)_var(--ease-spring)]">
+          <label htmlFor="quick-note" className="text-center text-callout text-ink-2">
+            What was the {titleCase(pending.name).toLowerCase()} for?
+          </label>
+          <input
+            id="quick-note"
+            ref={noteInputRef}
+            type="text"
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && note.trim()) void logWith(pending, note)
+            }}
+            placeholder="A few words, like sushi with Renee"
+            autoCapitalize="sentences"
+            enterKeyHint="done"
+            className="h-12 rounded-pill border border-line bg-surface px-4 text-center text-body text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
           />
-        ))}
-      </div>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setPending(null)
+                setNote('')
+              }}
+            >
+              Back
+            </Button>
+            <Button
+              fullWidth
+              disabled={!note.trim() || saving}
+              aria-busy={saving}
+              leadingIcon={saving ? <Spinner size={18} /> : undefined}
+              onClick={() => void logWith(pending, note)}
+            >
+              Log {formatCurrency(amountValue, { cents: false })}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        /* Category tiles. Quiet until an amount is entered, then the thing to tap. */
+        <div role="group" aria-label="Log to a category" className="grid grid-cols-3 gap-2.5">
+          {categories.map((category) => (
+            <CategoryTile
+              key={category.id}
+              category={category}
+              disabled={!canLog}
+              saving={savingId === category.id}
+              onSelect={() => handlePick(category)}
+            />
+          ))}
+        </div>
+      )}
 
-      <p aria-live="polite" className="min-h-[20px] text-center text-caption">
-        {errored ? (
-          <span role="alert" className="text-danger">
-            Could not log that. Try again.
-          </span>
-        ) : result ? null : hasAmount ? (
-          <span className="text-muted">Tap a category to log it.</span>
-        ) : (
-          <span className="text-muted">Enter an amount, then tap a category.</span>
-        )}
-      </p>
+      {!pending && (
+        <p aria-live="polite" className="min-h-[20px] text-center text-caption">
+          {errored ? (
+            <span role="alert" className="text-danger">
+              Could not log that. Try again.
+            </span>
+          ) : result ? null : hasAmount ? (
+            <span className="text-muted">Tap a category to log it.</span>
+          ) : (
+            <span className="text-muted">Enter an amount, then tap a category.</span>
+          )}
+        </p>
+      )}
     </div>
   )
 }

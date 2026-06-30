@@ -27,6 +27,7 @@ export function useLogExpense() {
       categoryId: input.categoryId,
       date: input.date,
       createdBy,
+      ...(input.note ? { note: input.note } : {}),
     })
     if (input.goalId) {
       // When the house savings live in flagged accounts, the contribution lands on the

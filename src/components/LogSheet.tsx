@@ -3,6 +3,9 @@ import { Sheet } from './Sheet'
 import { QuickAdd, type QuickAddInput } from './QuickAdd'
 import { useHouseModel } from '../hooks/useHouseModel'
 import { useLogExpense } from '../hooks/useLogExpense'
+import { useTransactions } from '../hooks/useTransactions'
+import { buildTrendContext } from '../lib/trends'
+import { monthBounds } from '../lib/summary'
 import { DEFAULTS } from '../config/app'
 import type { CategoryType } from '../types'
 import type { ReceiptMediaType, ScanReceiptResult } from '../services/receipt'
@@ -12,8 +15,13 @@ import type { ReceiptMediaType, ScanReceiptResult } from '../services/receipt'
 // buried behind navigation. Optimistic write, then the sheet closes after the calm
 // confirmation is seen.
 export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { settings, categories, goals, house, horizonValid } = useHouseModel()
+  const { settings, today, categories, goals, house, horizonValid } = useHouseModel()
   const { logExpense } = useLogExpense()
+  const monthTx = useTransactions(monthBounds(today))
+  const trendContext = useMemo(
+    () => buildTrendContext(monthTx.transactions, categories),
+    [monthTx.transactions, categories],
+  )
 
   const quickCategories = useMemo(() => {
     const mapped = categories.map((c) => ({
@@ -40,8 +48,9 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
 
   async function handleLog(input: QuickAddInput) {
     await logExpense(input, house)
-    // Close shortly after a successful write so the calm confirmation is seen first.
-    window.setTimeout(onClose, 1400)
+    // Close shortly after a plain log so the calm confirmation is seen first. A described
+    // expense (Other or Dining) shows a savings tip, so the sheet stays open for it.
+    if (!input.note) window.setTimeout(onClose, 1400)
   }
 
   async function handleScanImage(input: { imageBase64: string; mediaType: string }): Promise<ScanReceiptResult> {
@@ -66,6 +75,7 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
         houseHorizonValid={horizonValid}
         savingsGoals={savingsGoals}
         onLog={handleLog}
+        trendContext={trendContext}
         scanEnabled={scanProvider != null}
         onScanImage={scanProvider != null ? handleScanImage : undefined}
       />

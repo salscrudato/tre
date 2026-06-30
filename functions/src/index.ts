@@ -271,6 +271,240 @@ function parseSavings(text: string): SavingsIdea[] {
   }
 }
 
+// analyzeReceipt: read a receipt image with Grok vision and return the line items plus
+// concrete, trend-aware ways to spend less on things like these (buy in bulk, a cheaper
+// store brand, order it on Amazon Subscribe and Save, a cheaper merchant). The objective
+// is to find savings, grounded in what the household actually buys.
+interface ReceiptItem {
+  name: string
+  price: number
+}
+interface AnalyzedReceipt {
+  total: number | null
+  merchant?: string
+  date?: string
+  suggestedCategory?: string
+  items: ReceiptItem[]
+  tips: SavingsIdea[]
+  error?: string
+}
+
+export const analyzeReceipt = onCall(
+  { secrets: [XAI_API_KEY], region: 'us-east1', timeoutSeconds: 90 },
+  async (request): Promise<AnalyzedReceipt> => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Sign in to scan a receipt.')
+    }
+    const data = request.data as
+      | { imageBase64?: string; mediaType?: string; categories?: string[]; context?: string }
+      | undefined
+    const imageBase64 = data?.imageBase64
+    const mediaType = data?.mediaType
+    const categories = Array.isArray(data?.categories) ? data.categories : []
+    if (!imageBase64 || !mediaType) {
+      throw new HttpsError('invalid-argument', 'An image is required.')
+    }
+
+    let key = ''
+    try {
+      key = XAI_API_KEY.value()
+    } catch {
+      key = ''
+    }
+    if (!key) {
+      return { total: null, items: [], tips: [], error: 'Receipt analysis is not configured yet. Set the xAI key.' }
+    }
+
+    const names = categories.length > 0 ? categories.join(', ') : 'Other'
+    const trend = data?.context
+      ? ` The household's recent buying patterns: ${data.context}. Personalize the tips to what they actually buy and how often.`
+      : ''
+    const instruction = `You are a money-saving advisor for a married couple saving for a house. Read this receipt image and return STRICT JSON only, no prose and no markdown code fences, in exactly this shape: {"total": number, "merchant": string, "date": string, "suggestedCategory": string, "items": [{"name": string, "price": number}], "tips": [{"title": string, "detail": string, "estMonthly": number}]}. total is the final amount paid as a number. date is the purchase date in YYYY-MM-DD format. suggestedCategory must be exactly one of these names: ${names} (use "Other" if none fit). items is the line items with their prices. tips is two to five concrete, realistic ways to spend less on items like these: a specific cheaper store brand or alternative with a real current price, buying a frequently bought item in bulk, ordering it cheaper online (for example Amazon Subscribe and Save), or a cheaper merchant.${trend} estMonthly is the realistic recurring monthly dollar saving as a number, or 0 if it cannot be quantified. Never suggest cutting healthcare, childcare, therapy, or essentials. Do not use em dashes, en dashes, or emoji.`
+
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: 'grok-4',
+        max_tokens: 1500,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: instruction },
+              { type: 'image_url', image_url: { url: `data:${mediaType};base64,${imageBase64}` } },
+            ],
+          },
+        ],
+      }),
+    }).catch((err) => {
+      console.error('analyzeReceipt grok fetch failed', err)
+      return null
+    })
+
+    if (!response) {
+      throw new HttpsError('unavailable', 'Could not reach the receipt service. Try again.')
+    }
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '')
+      console.error('analyzeReceipt grok error', response.status, errorBody)
+      return { total: null, items: [], tips: [] }
+    }
+    const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> }
+    return parseAnalyzedReceipt(body.choices?.[0]?.message?.content ?? '', categories)
+  },
+)
+
+function extractJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    let cleaned = text.trim()
+    const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/m.exec(cleaned)
+    if (fence) cleaned = fence[1].trim()
+    const first = cleaned.indexOf('{')
+    const last = cleaned.lastIndexOf('}')
+    if (first !== -1 && last > first) cleaned = cleaned.slice(first, last + 1)
+    return JSON.parse(cleaned) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function ideasFrom(raw: unknown): SavingsIdea[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((entry) => {
+      const idea = entry as Record<string, unknown>
+      return {
+        title: typeof idea.title === 'string' ? idea.title : '',
+        detail: typeof idea.detail === 'string' ? idea.detail : '',
+        estMonthly:
+          typeof idea.estMonthly === 'number' && Number.isFinite(idea.estMonthly) && idea.estMonthly >= 0
+            ? idea.estMonthly
+            : 0,
+      }
+    })
+    .filter((idea) => idea.title.length > 0 && idea.detail.length > 0)
+    .slice(0, 6)
+}
+
+function parseAnalyzedReceipt(text: string, categories: string[]): AnalyzedReceipt {
+  const json = extractJsonObject(text)
+  if (!json) return { total: null, items: [], tips: [] }
+  const total =
+    typeof json.total === 'number' && Number.isFinite(json.total) && json.total >= 0 ? json.total : null
+  const merchant = typeof json.merchant === 'string' ? json.merchant : undefined
+  const date = typeof json.date === 'string' ? json.date : undefined
+  const suggested = typeof json.suggestedCategory === 'string' ? json.suggestedCategory : 'Other'
+  const suggestedCategory = categories.find((c) => c.toLowerCase() === suggested.toLowerCase()) ?? 'Other'
+  const items = Array.isArray(json.items)
+    ? json.items
+        .map((entry) => {
+          const item = entry as Record<string, unknown>
+          return {
+            name: typeof item.name === 'string' ? item.name : '',
+            price: typeof item.price === 'number' && Number.isFinite(item.price) ? item.price : 0,
+          }
+        })
+        .filter((item) => item.name.length > 0)
+        .slice(0, 40)
+    : []
+  return { total, merchant, date, suggestedCategory, items, tips: ideasFrom(json.tips) }
+}
+
+// parseStatement: read a bill or card statement image with Grok vision and return the
+// recurring charges, mapped to our categories, so the app can propose budget and bill
+// updates the household can accept. Never auto-applies; the client gates each on accept.
+interface StatementCharge {
+  name: string
+  amount: number
+  category: string
+  cadence: 'monthly' | 'annual' | 'oneoff'
+  dueDay?: number
+}
+
+export const parseStatement = onCall(
+  { secrets: [XAI_API_KEY], region: 'us-east1', timeoutSeconds: 90 },
+  async (request): Promise<{ charges: StatementCharge[]; error?: string }> => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Sign in to import a statement.')
+    }
+    const data = request.data as { imageBase64?: string; mediaType?: string; categories?: string[] } | undefined
+    const imageBase64 = data?.imageBase64
+    const mediaType = data?.mediaType
+    const categories = Array.isArray(data?.categories) ? data.categories : []
+    if (!imageBase64 || !mediaType) {
+      throw new HttpsError('invalid-argument', 'An image is required.')
+    }
+
+    let key = ''
+    try {
+      key = XAI_API_KEY.value()
+    } catch {
+      key = ''
+    }
+    if (!key) {
+      return { charges: [], error: 'Statement import is not configured yet. Set the xAI key.' }
+    }
+
+    const names = categories.length > 0 ? categories.join(', ') : 'Other'
+    const instruction = `You read a bill or credit card statement image for a household budgeting app. Return STRICT JSON only, no prose and no markdown code fences, in exactly this shape: {"charges": [{"name": string, "amount": number, "category": string, "cadence": "monthly" | "annual" | "oneoff", "dueDay": number}]}. List the meaningful recurring charges and bills you can read (rent, utilities, phone, internet, insurance, subscriptions, loan payments). For each: name is the merchant or bill name, amount is the dollar amount as a number, category must be exactly one of these names: ${names} (use "Other" if none fit), cadence is monthly for a recurring monthly bill, annual for a once-a-year charge, or oneoff for a single non-recurring purchase, and dueDay is the day of the month (1 to 31) it is due if shown, else 1. Skip tiny incidental purchases. Do not use em dashes, en dashes, or emoji.`
+
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: 'grok-4',
+        max_tokens: 1500,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: instruction },
+              { type: 'image_url', image_url: { url: `data:${mediaType};base64,${imageBase64}` } },
+            ],
+          },
+        ],
+      }),
+    }).catch((err) => {
+      console.error('parseStatement grok fetch failed', err)
+      return null
+    })
+
+    if (!response) {
+      throw new HttpsError('unavailable', 'Could not reach the statement service. Try again.')
+    }
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '')
+      console.error('parseStatement grok error', response.status, errorBody)
+      return { charges: [] }
+    }
+    const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> }
+    return { charges: parseCharges(body.choices?.[0]?.message?.content ?? '', categories) }
+  },
+)
+
+function parseCharges(text: string, categories: string[]): StatementCharge[] {
+  const json = extractJsonObject(text)
+  if (!json || !Array.isArray(json.charges)) return []
+  const cadences: StatementCharge['cadence'][] = ['monthly', 'annual', 'oneoff']
+  return json.charges
+    .map((entry) => {
+      const charge = entry as Record<string, unknown>
+      const name = typeof charge.name === 'string' ? charge.name : ''
+      const amount = typeof charge.amount === 'number' && Number.isFinite(charge.amount) ? charge.amount : 0
+      const rawCat = typeof charge.category === 'string' ? charge.category : 'Other'
+      const category = categories.find((c) => c.toLowerCase() === rawCat.toLowerCase()) ?? 'Other'
+      const cadence = cadences.includes(charge.cadence as StatementCharge['cadence'])
+        ? (charge.cadence as StatementCharge['cadence'])
+        : 'monthly'
+      const dueDayRaw = typeof charge.dueDay === 'number' ? Math.round(charge.dueDay) : 1
+      const dueDay = dueDayRaw >= 1 && dueDayRaw <= 31 ? dueDayRaw : 1
+      return { name, amount, category, cadence, dueDay }
+    })
+    .filter((charge) => charge.name.length > 0 && charge.amount > 0)
+    .slice(0, 30)
+}
+
 // 6.2 Receipt scan (optional). Reads the matching provider secret, sends the image
 // to a vision model, and returns the parsed fields. It never writes to Firestore
 // and never auto-logs. On any failure it returns { amount: null } so the client

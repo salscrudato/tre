@@ -4,6 +4,7 @@ import { useHouseModel } from '../hooks/useHouseModel'
 import { useTransactions } from '../hooks/useTransactions'
 import { useLogExpense } from '../hooks/useLogExpense'
 import { discretionaryBudget } from '../lib/budget'
+import { buildTrendContext } from '../lib/trends'
 import { monthBounds } from '../lib/summary'
 import { formatCurrency } from '../lib/format'
 import { cn } from '../lib/cn'
@@ -63,6 +64,12 @@ export default function Home() {
   }, [categories])
   const savingsGoals = useMemo(() => goals.map((g) => ({ id: g.id, name: g.name })), [goals])
   const categoryNames = useMemo(() => categories.map((c) => c.name), [categories])
+  // A short summary of this month's spending, so the savings tip after logging Other or
+  // Dining is grounded in what we actually buy.
+  const trendContext = useMemo(
+    () => buildTrendContext(monthTx.transactions, categories),
+    [monthTx.transactions, categories],
+  )
 
   const scanProvider =
     settings?.receiptScanProvider === 'anthropic' || settings?.receiptScanProvider === 'grok'
@@ -99,6 +106,7 @@ export default function Home() {
             houseHorizonValid={horizonValid}
             savingsGoals={savingsGoals}
             onLog={handleLog}
+            trendContext={trendContext}
             scanEnabled={scanProvider != null}
             onScanImage={scanProvider != null ? handleScanImage : undefined}
           />

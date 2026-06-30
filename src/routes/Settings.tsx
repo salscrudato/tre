@@ -2,6 +2,7 @@ import { useAuth } from '../context/auth-context'
 import { MonthlyPlanSection } from '../components/settings/MonthlyPlanSection'
 import { IncomeSection } from '../components/settings/IncomeSection'
 import { FixedBillsSection } from '../components/settings/FixedBillsSection'
+import { StatementImportSection } from '../components/settings/StatementImportSection'
 import { DiscretionarySection } from '../components/settings/DiscretionarySection'
 import { AccountsSection } from '../components/settings/AccountsSection'
 import { PlaidSection } from '../components/settings/PlaidSection'
@@ -28,6 +29,7 @@ export default function Settings() {
         <MonthlyPlanSection />
         <IncomeSection />
         <FixedBillsSection />
+        <StatementImportSection />
         <DiscretionarySection />
       </section>
 

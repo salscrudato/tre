@@ -12,12 +12,14 @@ import { useAccounts } from '../hooks/useAccounts'
 import { useTransactions } from '../hooks/useTransactions'
 import { useToday } from '../hooks/useToday'
 import { useAdvice } from '../hooks/useAdvice'
+import { useLogExpense } from '../hooks/useLogExpense'
 import { parseAdvice, type AdviceAction, type AdviceSnapshot } from '../services/advice'
 import { futureValueRecurring, horizonIsValid, houseImpactOfMonthly, type HouseImpactInput } from '../lib/money'
 import { houseContext } from '../lib/house'
 import { householdPlan } from '../lib/plan'
 import { effectiveLever } from '../lib/recurring'
 import { savingsRateMonthly } from '../lib/budget'
+import { buildTrendContext } from '../lib/trends'
 import { formatCurrency, titleCase } from '../lib/format'
 import { monthBounds } from '../lib/summary'
 import { DEFAULTS } from '../config/app'
@@ -25,6 +27,8 @@ import { Card } from '../components/Card'
 import { Button } from '../components/Button'
 import { Money } from '../components/Money'
 import { Spinner } from '../components/Spinner'
+import { ReceiptSheet } from '../components/ReceiptSheet'
+import { ScanIcon } from '../components/icons/Scan'
 
 // Defense in depth for the protected-category rule: drop any tip that proposes
 // cutting or reducing our home (rent, mortgage), therapy, healthcare, childcare, or
@@ -96,7 +100,13 @@ export default function Optimize() {
   )
   const horizonValid = house ? horizonIsValid(house.targetDate, today) : false
 
+  const { logExpense } = useLogExpense()
+  const trendContext = useMemo(
+    () => buildTrendContext(monthTx.transactions, categories),
+    [monthTx.transactions, categories],
+  )
   const [dismissed, setDismissed] = useState<Set<number>>(new Set())
+  const [receiptOpen, setReceiptOpen] = useState(false)
 
   const snapshot = useMemo<AdviceSnapshot | null>(() => {
     if (!settings || !plan) return null
@@ -201,14 +211,22 @@ export default function Optimize() {
           Grounded ways to raise our savings rate and home buying power, based on our real numbers.
           Every figure is an estimate.
         </p>
-        <Button
-          className="mt-4"
-          leadingIcon={<SparkleIcon size={18} strokeWidth={2} aria-hidden="true" />}
-          disabled={!snapshot || advice.isPending}
-          onClick={handleGetAdvice}
-        >
-          {advice.data ? 'Refresh advice' : 'Get advice'}
-        </Button>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Button
+            leadingIcon={<SparkleIcon size={18} strokeWidth={2} aria-hidden="true" />}
+            disabled={!snapshot || advice.isPending}
+            onClick={handleGetAdvice}
+          >
+            {advice.data ? 'Refresh advice' : 'Get advice'}
+          </Button>
+          <Button
+            variant="secondary"
+            leadingIcon={<ScanIcon size={18} />}
+            onClick={() => setReceiptOpen(true)}
+          >
+            Scan a receipt
+          </Button>
+        </div>
       </Card>
 
       {advice.isPending && (
@@ -276,6 +294,14 @@ export default function Optimize() {
           </EmptyNote>
         </Card>
       )}
+
+      <ReceiptSheet
+        open={receiptOpen}
+        onClose={() => setReceiptOpen(false)}
+        categories={categories}
+        trendContext={trendContext}
+        onLog={(input) => logExpense(input, house)}
+      />
     </div>
   )
 }
