@@ -3,28 +3,21 @@ import { Link } from 'react-router-dom'
 import { SparkleIcon, ChevronRightIcon } from '../components/icons/ui'
 import { HomeIcon } from '../components/icons/nav'
 import { useHouseModel } from '../hooks/useHouseModel'
-import { useTransactions } from '../hooks/useTransactions'
-import { monthBounds } from '../lib/summary'
+import { useSettings } from '../hooks/useSettings'
 import { Card } from '../components/Card'
 import { Spinner } from '../components/Spinner'
 import { HouseGoalCard } from '../components/HouseGoalCard'
-import { HouseFund } from '../components/HouseFund'
 import { HousePower } from '../components/HousePower'
 
-// The House tab: everything about the home we are saving for, in one calm place. The
-// down payment card is the single glowing hero; below it sit this month's house fund and
-// the home we can afford with its extra-savings slider, then a quiet link to ways to
-// save. None of this appears on Home, so Home stays calm.
+// The House tab: the home we are saving for, kept to two ideas so it never overwhelms.
+// The down payment goal is the single glowing hero; below it sits the home we can
+// afford, where the monthly payment and extra savings are live dials. A quiet link to
+// ways to save closes it out. None of this appears on Home, so Home stays calm.
 export default function House() {
-  const { settings, today, categories, plan, house, horizonValid } = useHouseModel()
-  const monthTx = useTransactions(monthBounds(today))
+  const { settings, today, plan, house } = useHouseModel()
+  const { update: updateSettings } = useSettings()
 
-  const typeById = useMemo(() => new Map(categories.map((c) => [c.id, c.type])), [categories])
   const discBudget = plan?.discretionaryBudgetMonthly ?? 0
-  const discSpent = useMemo(
-    () => monthTx.transactions.filter((t) => typeById.get(t.categoryId) === 'variable').reduce((s, t) => s + t.amount, 0),
-    [monthTx.transactions, typeById],
-  )
   const maxExtraSavings = useMemo(() => Math.max(500, Math.ceil(discBudget / 100) * 100), [discBudget])
 
   if (!settings) {
@@ -59,9 +52,15 @@ export default function House() {
     <div className="flex flex-col gap-6">
       <HouseGoalCard house={house} today={today} />
 
-      <HouseFund discBudget={discBudget} discSpent={discSpent} house={house} horizonValid={horizonValid} />
-
-      <HousePower house={house} targetHomePrice={settings.targetHomePrice} maxExtra={maxExtraSavings} today={today} />
+      <HousePower
+        house={house}
+        targetHomePrice={settings.targetHomePrice}
+        maxExtra={maxExtraSavings}
+        today={today}
+        pitiMin={settings.targetPitiMin}
+        pitiMax={settings.targetPitiMax}
+        onPitiChange={(value) => updateSettings.mutate({ targetPiti: value })}
+      />
 
       <Link
         to="/optimize"

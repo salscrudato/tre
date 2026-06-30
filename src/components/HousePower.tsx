@@ -13,6 +13,11 @@ export type HousePowerProps = {
   // The slider ceiling, derived from the household's monthly surplus.
   maxExtra?: number
   today: Date
+  // The monthly payment (PITI) range the live dial explores, and a callback to persist
+  // the chosen value as the household's target.
+  pitiMin?: number
+  pitiMax?: number
+  onPitiChange?: (value: number) => void
 }
 
 const MAX_EXTRA = 2000
@@ -22,12 +27,23 @@ const MAX_EXTRA = 2000
 // town price and a slider for extra monthly savings that live updates the affordable
 // price. The down payment date lives on the House goal card, not here, so the two are
 // never presented as competing plans. Numbers spring; reduced motion jumps.
-export function HousePower({ house, targetHomePrice, maxExtra, today }: HousePowerProps) {
+export function HousePower({ house, targetHomePrice, maxExtra, today, pitiMin, pitiMax, onPitiChange }: HousePowerProps) {
   const [extra, setExtra] = useState(0)
   const max = maxExtra ?? MAX_EXTRA
   // Clamp to the current ceiling so a shrinking budget (lower max) never leaves the
   // slider stuck above its track showing an unreachable extra.
   const clampedExtra = Math.min(extra, max)
+
+  // The monthly payment (PITI) is a live dial here and the saved target everywhere else.
+  // Seed from the saved value, re-seed when it changes (after a save lands), and persist
+  // on release so dragging it updates the home we can afford across the app.
+  const pitiFloor = pitiMin ?? 3000
+  const pitiCeil = Math.max(pitiFloor + 500, pitiMax ?? 8000)
+  const [piti, setPiti] = useState(house.targetPiti)
+  useEffect(() => setPiti(house.targetPiti), [house.targetPiti])
+  const clampedPiti = Math.min(Math.max(piti, pitiFloor), pitiCeil)
+  const commitPiti = () => onPitiChange?.(clampedPiti)
+
   // A target date that is today or already past cannot project a meaningful price.
   const valid = horizonIsValid(house.targetDate, today)
 
@@ -47,13 +63,13 @@ export function HousePower({ house, targetHomePrice, maxExtra, today }: HousePow
       targetDate: house.targetDate,
       today,
       downPaymentReturn: house.downPaymentReturn,
-      targetPiti: house.targetPiti,
+      targetPiti: clampedPiti,
       mortgageRate: house.mortgageRate,
       termYears: house.termYears,
       propertyTaxRate: house.propertyTaxRate,
       annualInsurance: house.annualInsurance,
     }).affordableHomePrice
-  }, [house, clampedExtra, today])
+  }, [house, clampedExtra, clampedPiti, today])
 
   const hasTarget = typeof targetHomePrice === 'number' && targetHomePrice > 0
   const animated = useCountUp(affordable)
@@ -142,6 +158,31 @@ export function HousePower({ house, targetHomePrice, maxExtra, today }: HousePow
       </div>
 
       <p className="text-callout text-ink-2">{readText}</p>
+
+      <div className="mt-5 flex flex-col gap-2 border-t border-line pt-5">
+        <label htmlFor="target-piti" className="flex items-baseline justify-between text-callout">
+          <span className="text-ink-2">Monthly payment (PITI)</span>
+          <span className="tnum font-semibold text-ink">{formatCurrency(clampedPiti, { cents: false })}</span>
+        </label>
+        <input
+          id="target-piti"
+          type="range"
+          min={pitiFloor}
+          max={pitiCeil}
+          step={100}
+          value={clampedPiti}
+          aria-valuetext={`${formatCurrency(clampedPiti, { cents: false })} per month`}
+          onChange={(event) => setPiti(Number(event.target.value))}
+          onPointerUp={commitPiti}
+          onKeyUp={commitPiti}
+          onBlur={commitPiti}
+          className="w-full accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+        />
+        <p className="text-caption text-ink-2">
+          The full monthly payment (loan, taxes, insurance) we plan for. A higher payment buys more home. We save it as
+          our target.
+        </p>
+      </div>
 
       <div className="mt-5 flex flex-col gap-2">
         <label htmlFor="extra-savings" className="flex items-baseline justify-between text-callout">

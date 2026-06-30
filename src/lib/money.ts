@@ -101,8 +101,24 @@ export function maxHomePriceForPiti(
   propertyTaxRate: number,
   annualInsurance: number,
 ): number {
+  // The all-cash floor: a home priced at the down payment carries no loan, so its PITI
+  // is only tax and insurance. If even that exceeds the target, no home meets the target,
+  // so the down payment price is the most we can honestly report (never a price whose
+  // PITI is actually over the target).
+  const floor = piti(downPayment, downPayment, annualRate, termYears, propertyTaxRate, annualInsurance).total
+  if (floor >= targetPiti) return downPayment
+
   let lo = downPayment
   let hi = downPayment + 5_000_000
+  // Grow the upper bound until its PITI clears the target, so the search never saturates
+  // at an arbitrary ceiling for a high target PITI or near-zero tax and insurance.
+  for (
+    let guard = 0;
+    guard < 40 && piti(hi, downPayment, annualRate, termYears, propertyTaxRate, annualInsurance).total <= targetPiti;
+    guard += 1
+  ) {
+    hi += hi - downPayment
+  }
   for (let iteration = 0; iteration < 60; iteration += 1) {
     const mid = (lo + hi) / 2
     const total = piti(

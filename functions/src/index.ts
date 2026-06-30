@@ -155,6 +155,122 @@ function buildUserContent(snapshot: Snapshot, question?: string): string {
   return lines.join('\n')
 }
 
+// findSavings: a per-expense money-saving advisor powered by Grok (xAI). Given one
+// expense or recurring bill (and light household context), it returns concrete cheaper,
+// similar, or creative ways to spend less. The xAI key is a server secret. On a missing
+// key it fails with a clear precondition error so the client can guide setup.
+const SAVINGS_SYSTEM = `You are a practical money-saving advisor for a married couple saving for a house down payment. Given one expense or recurring bill and its category, suggest three to five concrete, realistic ways to spend less on it or on things like it: a specific cheaper named alternative with a real current price, buying in bulk, a lower plan or tier that keeps the service, a store brand in place of a premium one, cancelling or downgrading a discretionary subscription, or a creative swap. Be specific and real, with plausible current market prices. Never suggest cutting or reducing rent, mortgage, housing, childcare, daycare, healthcare, therapy, or insurance coverage; for those, only suggest shopping the same coverage for a better rate, paying annually for a discount, or an honest future tailwind. Do not use em dashes, en dashes, or emoji. Return STRICT JSON only, no prose and no markdown code fences, in exactly this shape: {"ideas": [{"title": string, "detail": string, "estMonthly": number}]}. estMonthly is the realistic recurring monthly dollar saving as a number, or 0 if it cannot be quantified.`
+
+interface SavingsTarget {
+  name: string
+  category: string
+  amount: number
+  cadence?: 'monthly' | 'once'
+}
+interface SavingsIdea {
+  title: string
+  detail: string
+  estMonthly: number
+}
+
+export const findSavings = onCall(
+  { secrets: [XAI_API_KEY], region: 'us-east1', timeoutSeconds: 60 },
+  async (request): Promise<{ ideas: SavingsIdea[] }> => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Sign in to find savings.')
+    }
+    const data = request.data as { target?: SavingsTarget; context?: string } | undefined
+    const target = data?.target
+    if (!target || typeof target.name !== 'string' || typeof target.amount !== 'number') {
+      throw new HttpsError('invalid-argument', 'An expense is required.')
+    }
+
+    let key = ''
+    try {
+      key = XAI_API_KEY.value()
+    } catch {
+      key = ''
+    }
+    if (!key) {
+      throw new HttpsError(
+        'failed-precondition',
+        'The savings finder is not configured yet. Set the XAI_API_KEY secret.',
+      )
+    }
+
+    const cadence = target.cadence === 'monthly' ? 'a recurring monthly cost' : 'a one-time expense'
+    const userContent = [
+      `Expense: ${target.name}`,
+      `Category: ${target.category}`,
+      `Amount: ${target.amount} (${cadence})`,
+      data?.context ? `Household context: ${data.context}` : '',
+      'Suggest cheaper, similar, or creative ways to save on this. Return only the JSON described in the system instructions.',
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: 'grok-4',
+        max_tokens: 900,
+        messages: [
+          { role: 'system', content: SAVINGS_SYSTEM },
+          { role: 'user', content: userContent },
+        ],
+      }),
+    }).catch((err) => {
+      console.error('findSavings grok fetch failed', err)
+      return null
+    })
+
+    if (!response) {
+      throw new HttpsError('unavailable', 'Could not reach the savings service. Try again.')
+    }
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '')
+      console.error('findSavings grok error', response.status, errorBody)
+      throw new HttpsError('internal', `Savings service returned an error (${response.status}).`)
+    }
+    const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> }
+    const text = (body.choices?.[0]?.message?.content ?? '').trim()
+    if (text.length === 0) {
+      throw new HttpsError('internal', 'The savings service returned no usable response. Try again.')
+    }
+    return { ideas: parseSavings(text) }
+  },
+)
+
+function parseSavings(text: string): SavingsIdea[] {
+  try {
+    let cleaned = text.trim()
+    const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/m.exec(cleaned)
+    if (fence) cleaned = fence[1].trim()
+    const first = cleaned.indexOf('{')
+    const last = cleaned.lastIndexOf('}')
+    if (first !== -1 && last > first) cleaned = cleaned.slice(first, last + 1)
+    const json = JSON.parse(cleaned) as { ideas?: unknown }
+    if (!Array.isArray(json.ideas)) return []
+    return json.ideas
+      .map((raw) => {
+        const idea = raw as Record<string, unknown>
+        return {
+          title: typeof idea.title === 'string' ? idea.title : '',
+          detail: typeof idea.detail === 'string' ? idea.detail : '',
+          estMonthly:
+            typeof idea.estMonthly === 'number' && Number.isFinite(idea.estMonthly) && idea.estMonthly >= 0
+              ? idea.estMonthly
+              : 0,
+        }
+      })
+      .filter((idea) => idea.title.length > 0 && idea.detail.length > 0)
+      .slice(0, 6)
+  } catch {
+    return []
+  }
+}
+
 // 6.2 Receipt scan (optional). Reads the matching provider secret, sends the image
 // to a vision model, and returns the parsed fields. It never writes to Firestore
 // and never auto-logs. On any failure it returns { amount: null } so the client

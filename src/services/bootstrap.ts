@@ -33,13 +33,13 @@ const STARTER_CATEGORIES: SeedCategory[] = [
 ]
 
 const STARTER_FIXED: SeedFixed[] = [
-  { id: 'fx_rent', name: 'Rent', amount: 4050, categoryId: 'cat_housing', dueDay: 1, owner: 'Sal', active: true },
+  { id: 'fx_rent', name: 'Rent', amount: 4100, categoryId: 'cat_housing', dueDay: 1, owner: 'Sal', active: true },
   { id: 'fx_daycare', name: 'Daycare', amount: 1900, categoryId: 'cat_childcare', dueDay: 1, owner: 'Sal', active: true },
   { id: 'fx_car', name: 'Car (Tesla)', amount: 525, categoryId: 'cat_transportation', dueDay: 1, owner: 'Sal', active: true },
   { id: 'fx_mattress', name: 'Mattress (0% APR)', amount: 166, categoryId: 'cat_debt', dueDay: 1, owner: 'Sal', active: true, endDate: '2026-12-31', note: 'Ends December 2026.' },
   { id: 'fx_loans_sal', name: 'Student Loans (Sal)', amount: 125, categoryId: 'cat_debt', dueDay: 1, owner: 'Sal', active: true },
   { id: 'fx_loans_lisa', name: 'Student Loans (Lisa)', amount: 250, categoryId: 'cat_debt', dueDay: 1, owner: 'Lisa', active: true },
-  { id: 'fx_geico', name: 'Geico', amount: 150, categoryId: 'cat_insurance', dueDay: 1, owner: 'Lisa', active: true },
+  { id: 'fx_geico', name: 'Geico', amount: 150, categoryId: 'cat_insurance', dueDay: 1, owner: 'Lisa', active: false, note: 'Paid in full once a year for the discount (Lisa). Off the monthly plan; log it as a one-time expense when it is paid.' },
   { id: 'fx_att', name: 'AT&T (phone)', amount: 171, categoryId: 'cat_utilities', dueDay: 5, owner: 'Lisa', active: true },
   { id: 'fx_pseg', name: 'PSEG', amount: 200, categoryId: 'cat_utilities', dueDay: 9, owner: 'Lisa', active: true },
   { id: 'fx_peacock', name: 'Peacock', amount: 18.12, categoryId: 'cat_subscriptions', dueDay: 10, owner: 'Lisa', active: true },
@@ -57,7 +57,7 @@ const STARTER_FIXED: SeedFixed[] = [
 
 const STARTER_INCOMES: SeedIncome[] = [
   { id: 'inc_sal', name: 'Accenture', owner: 'Sal', netPerPaycheck: 6250, frequency: 'semimonthly', payDays: [15, 30], note: 'Net take-home after taxes, 401k, benefits.' },
-  { id: 'inc_lisa', name: 'Ridgewood Public Schools', owner: 'Lisa', netPerPaycheck: 2350, frequency: 'semimonthly', payDays: [15, 30], startMonth: '2026-09-01', note: 'Pay starts in September. Net after pension, taxes, family insurance.' },
+  { id: 'inc_lisa', name: 'Ridgewood Public Schools', owner: 'Lisa', netPerPaycheck: 2350, frequency: 'semimonthly', payDays: [15, 30], note: 'Net take-home after pension, taxes, family insurance. Both incomes apply now.' },
 ]
 
 // The real Betterment accounts, plus Lisa's savings held outside Betterment. House,
@@ -76,7 +76,7 @@ const STARTER_GOALS: SeedGoal[] = [
 ]
 
 const STARTER_BUDGET: Record<string, number> = {
-  cat_housing: 4050,
+  cat_housing: 4100,
   cat_childcare: 1900,
   cat_transportation: 650,
   cat_debt: 541,

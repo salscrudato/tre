@@ -14,7 +14,7 @@ import { monthsToReach, monthsToReachWithSchedule, type ContributionSchedule } f
 import { houseContext } from '../lib/house'
 import { householdPlan, type HouseholdPlan } from '../lib/plan'
 import { buildBudgetView, savingsRateMonthly, type BudgetGroup, type CategoryRow } from '../lib/budget'
-import { addMonths, isoDate, monthBounds, monthlyNetIncome, monthsElapsedThisYear, yearBounds } from '../lib/summary'
+import { addMonths, isoDate, monthBounds, monthlyNetIncome, yearBounds } from '../lib/summary'
 import { formatCurrency, formatDate, formatPercent, titleCase } from '../lib/format'
 import { DEFAULTS } from '../config/app'
 import { Card } from '../components/Card'
@@ -76,10 +76,13 @@ export default function Spending() {
     [categories, fixed, byCategoryId, mtdTx.transactions, ytdTx.transactions],
   )
 
-  // The one annual discretionary number, used everywhere: the budget for the months that
-  // have actually elapsed this year (a fresh July start reads as the remaining run rate),
-  // never the inflated times-twelve figure. Both "This year" lines below read from this.
-  const discYearToDateBudget = view.discMonthBudget * monthsElapsedThisYear(today)
+  // The one annual discretionary number, used everywhere: the budget for the time that
+  // has actually elapsed this year, with the current month prorated by the day so the
+  // budget and the spend it is compared against cover the same window (no phantom full
+  // month of headroom early in the month). Never the inflated times-twelve figure.
+  const daysInThisMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
+  const elapsedMonths = today.getMonth() + today.getDate() / daysInThisMonth
+  const discYearToDateBudget = view.discMonthBudget * elapsedMonths
 
   // Savings rate from the one shared definition, so Home, Spending, and Optimize agree.
   const savingsRate = useMemo(

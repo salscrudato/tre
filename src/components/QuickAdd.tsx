@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CalendarIcon, CheckIcon } from './icons/ui'
 import { AmountField } from './Field'
-import { Button } from './Button'
-import { CategoryChip } from './CategoryChip'
 import { ImpactReveal } from './ImpactReveal'
 import { Spinner } from './Spinner'
 import { ScanIcon } from './icons/Scan'
-import { formatDate } from '../lib/format'
+import { resolveCategoryIcon } from '../config/icons'
+import { formatDate, formatCurrency, titleCase } from '../lib/format'
 import { todayISO } from '../lib/summary'
 import { cn } from '../lib/cn'
 import type { HouseImpactInput } from '../lib/money'
@@ -41,7 +40,7 @@ export type QuickAddProps = {
   className?: string
 }
 
-type Status = 'idle' | 'saving' | 'logged' | 'error'
+type Result = { amount: number; categoryName: string; type: CategoryType; goalName?: string }
 type ScanNotice = { kind: 'ok' | 'info'; text: string } | null
 
 const SUPPORTED_TYPES: Record<string, true> = {
@@ -63,11 +62,12 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
-// The home logging surface, the most important flow in the app. The only required
-// inputs are amount and category; the date defaults to today and is tucked away.
-// Picking a discretionary category leads with the house cost; picking a savings
-// category lets you credit a bucket so the house meter lifts. Receipt scanning, when
-// enabled, only pre-fills the form; it never auto-logs.
+// The home logging surface, the most important flow in the app. Type an amount, then
+// tap a category tile and it logs in one motion: no separate submit button. The tiles
+// stay quiet until an amount is entered, then light up as the thing to tap. After a
+// discretionary log the invest-instead impact appears as a brief, honest flourish; a
+// necessary expense or a savings entry just confirms calmly. Receipt scanning, when
+// enabled, only pre-fills the amount; it never auto-logs.
 export function QuickAdd({
   categories,
   annualReturn,
@@ -82,12 +82,11 @@ export function QuickAdd({
 }: QuickAddProps) {
   const today = todayISO()
   const [amount, setAmount] = useState('')
-  const [categoryId, setCategoryId] = useState<string | null>(null)
-  const [goalId, setGoalId] = useState<string | null>(null)
   const [date, setDate] = useState(today)
   const [showDate, setShowDate] = useState(false)
-  const [status, setStatus] = useState<Status>('idle')
-  const [loggedKind, setLoggedKind] = useState<'expense' | 'savings'>('expense')
+  const [savingId, setSavingId] = useState<string | null>(null)
+  const [errored, setErrored] = useState(false)
+  const [result, setResult] = useState<Result | null>(null)
   const [scanning, setScanning] = useState(false)
   const [scanNotice, setScanNotice] = useState<ScanNotice>(null)
   const [entryKey, setEntryKey] = useState(0)
@@ -98,43 +97,43 @@ export function QuickAdd({
     if (showDate) dateInputRef.current?.focus()
   }, [showDate])
 
-  const selected = useMemo(
-    () => categories.find((c) => c.id === categoryId) ?? null,
-    [categories, categoryId],
-  )
-  const isSavings = selected?.type === 'savings'
-  const emphasizeHouse = selected?.type === 'variable'
-
-  // When a savings category is chosen, default the credited bucket to the first goal
-  // (usually the house) so logging savings is still one tap.
+  // The just-logged confirmation clears itself, holding a beat longer for the
+  // discretionary impact reveal so it can be read.
   useEffect(() => {
-    if (isSavings && goalId == null && savingsGoals.length > 0) setGoalId(savingsGoals[0].id)
-    if (!isSavings && goalId != null) setGoalId(null)
-  }, [isSavings, goalId, savingsGoals])
+    if (!result) return
+    const ms = result.type === 'variable' ? 6000 : 2200
+    const id = window.setTimeout(() => setResult(null), ms)
+    return () => window.clearTimeout(id)
+  }, [result])
 
   const amountValue = Number.parseFloat(amount)
   const hasAmount = Number.isFinite(amountValue) && amountValue > 0
-  const canLog = hasAmount && categoryId != null && status !== 'saving'
+  const saving = savingId != null
+  const canLog = hasAmount && !saving
 
-  async function handleLog() {
-    if (!canLog || categoryId == null) return
-    setStatus('saving')
-    // Capture the kind before the form resets, so the confirmation can celebrate a
-    // savings entry as building the home rather than just "logged".
-    setLoggedKind(isSavings ? 'savings' : 'expense')
+  async function handlePick(category: QuickAddCategory) {
+    if (!canLog) return
+    const isSavings = category.type === 'savings'
+    const goal = isSavings ? savingsGoals[0] : undefined
+    setSavingId(category.id)
+    setErrored(false)
     try {
-      await onLog({ amount: amountValue, categoryId, date, goalId: isSavings ? (goalId ?? undefined) : undefined })
-      setStatus('logged')
+      await onLog({
+        amount: amountValue,
+        categoryId: category.id,
+        date,
+        goalId: goal?.id,
+      })
+      setResult({ amount: amountValue, categoryName: category.name, type: category.type, goalName: goal?.name })
       setAmount('')
-      setCategoryId(null)
-      setGoalId(null)
       setDate(today)
       setShowDate(false)
       setScanNotice(null)
       setEntryKey((key) => key + 1)
-      window.setTimeout(() => setStatus((current) => (current === 'logged' ? 'idle' : current)), 1600)
     } catch {
-      setStatus('error')
+      setErrored(true)
+    } finally {
+      setSavingId(null)
     }
   }
 
@@ -148,20 +147,13 @@ export function QuickAdd({
     setScanning(true)
     try {
       const imageBase64 = await fileToBase64(file)
-      const result = await onScanImage({ imageBase64, mediaType: file.type })
-      if (result.amount != null && Number.isFinite(result.amount)) {
-        setAmount(String(result.amount))
-        const matched =
-          categories.find((c) => c.name.toLowerCase() === (result.suggestedCategory ?? '').toLowerCase()) ??
-          categories.find((c) => c.name.toLowerCase() === 'other')
-        setCategoryId(matched?.id ?? null)
-        setStatus('idle')
-        setScanNotice({ kind: 'ok', text: 'Scanned. Check the amount and category, then log it.' })
+      const scan = await onScanImage({ imageBase64, mediaType: file.type })
+      if (scan.amount != null && Number.isFinite(scan.amount)) {
+        setAmount(String(scan.amount))
+        setResult(null)
+        setScanNotice({ kind: 'ok', text: 'Scanned. Tap a category to log it.' })
       } else {
-        setScanNotice({
-          kind: 'info',
-          text: result.error ?? 'Could not read that receipt. Enter it manually.',
-        })
+        setScanNotice({ kind: 'info', text: scan.error ?? 'Could not read that receipt. Enter it manually.' })
       }
     } catch {
       setScanNotice({ kind: 'info', text: 'Could not read that receipt. Enter it manually.' })
@@ -170,21 +162,22 @@ export function QuickAdd({
     }
   }
 
-  const logLabel = isSavings ? 'Add to savings' : 'Log expense'
+  const showImpact = result != null && result.type === 'variable'
 
   return (
     <div className={cn('flex flex-col gap-4', className)}>
-      <div className={cn('relative pt-2 pb-1 mb-1', scanEnabled && 'px-12')}>
+      <div className={cn('relative pt-2 pb-1', scanEnabled && 'px-12')}>
         <AmountField
           key={entryKey}
           value={amount}
           onValueChange={(next) => {
             setAmount(next)
-            if (status === 'error') setStatus('idle')
+            if (errored) setErrored(false)
+            if (result) setResult(null)
             if (scanNotice) setScanNotice(null)
           }}
           autoFocus={autoFocus}
-          ariaLabel={isSavings ? 'Savings amount' : 'Expense amount'}
+          ariaLabel="Amount"
         />
         {scanEnabled && onScanImage && (
           <>
@@ -207,79 +200,13 @@ export function QuickAdd({
               aria-label="Scan a receipt"
               className="absolute right-0 top-2 inline-flex h-11 w-11 items-center justify-center rounded-pill border border-line bg-surface text-accent-strong transition active:scale-[0.96] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-50"
             >
-              {scanning ? <Spinner size={18} /> : <ScanIcon size={20} />}
+              {scanning ? <Spinner size={18} label="Reading receipt" /> : <ScanIcon size={20} />}
             </button>
           </>
         )}
       </div>
 
-      {scanEnabled && (
-        <p
-          aria-live="polite"
-          className={cn(
-            'min-h-[18px] text-center text-caption',
-            scanNotice?.kind === 'ok' ? 'text-positive-strong' : 'text-muted',
-          )}
-        >
-          {scanning ? 'Reading your receipt' : (scanNotice?.text ?? '')}
-        </p>
-      )}
-
-      {/* Show the invest-instead projection only for discretionary spending (dining,
-          other, and the like, the variable categories). Logging a true necessary expense
-          like rent or daycare should stay calm: the delayed-gratification framing there
-          would only discourage, never help. */}
-      {hasAmount && emphasizeHouse && (
-        <ImpactReveal
-          amount={amountValue}
-          annualReturn={annualReturn}
-          house={houseHorizonValid ? house : undefined}
-          emphasizeHouse={emphasizeHouse}
-          className="origin-top"
-        />
-      )}
-
-      <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto scroll-pr-8 px-1 pb-1 [mask-image:linear-gradient(to_right,black_92%,transparent)]">
-        {categories.map((category) => (
-          <CategoryChip
-            key={category.id}
-            name={category.name}
-            color={category.color}
-            icon={category.icon}
-            selected={categoryId === category.id}
-            onSelect={() => setCategoryId(category.id)}
-          />
-        ))}
-      </div>
-
-      {isSavings && savingsGoals.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <span className="px-1 text-caption text-ink-2">Add to</span>
-          <div role="group" aria-label="Savings bucket" className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-            {savingsGoals.map((goal) => {
-              const active = goalId === goal.id
-              return (
-                <button
-                  key={goal.id}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setGoalId(goal.id)}
-                  className={cn(
-                    'inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-pill px-3.5 py-2 text-callout font-medium transition active:scale-[0.97] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    active
-                      ? 'bg-[color-mix(in_srgb,var(--color-accent)_18%,transparent)] text-accent-strong shadow-[inset_0_0_0_1.5px_var(--color-accent)]'
-                      : 'bg-surface-2 text-ink-2',
-                  )}
-                >
-                  {active && <CheckIcon size={15} strokeWidth={2.5} aria-hidden="true" />}
-                  {goal.name}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
+      {/* Date control, quiet at rest. Centered so the amount stays the focal point. */}
       <div className="flex items-center justify-center">
         {showDate ? (
           <input
@@ -304,30 +231,110 @@ export function QuickAdd({
         )}
       </div>
 
-      <Button
-        size="lg"
-        fullWidth
-        disabled={!canLog}
-        aria-busy={status === 'saving'}
-        leadingIcon={status === 'saving' ? <Spinner size={18} /> : undefined}
-        onClick={handleLog}
-      >
-        {status === 'saving' ? 'Saving' : logLabel}
-      </Button>
+      {scanEnabled && (scanning || scanNotice) && (
+        <p
+          aria-live="polite"
+          className={cn(
+            'text-center text-caption',
+            scanNotice?.kind === 'ok' ? 'text-positive-strong' : 'text-muted',
+          )}
+        >
+          {scanning ? 'Reading your receipt' : scanNotice?.text}
+        </p>
+      )}
 
-      <div aria-live="polite" className="min-h-[22px] text-center">
-        {status === 'logged' && (
-          <span className="inline-flex items-center gap-1.5 text-callout text-positive-strong">
+      {/* Just-logged confirmation. Discretionary spend earns the full invest-instead
+          reveal; a necessary expense or a savings entry confirms calmly. */}
+      {result && (
+        <div aria-live="polite" className="flex flex-col gap-3 motion-safe:animate-[pop-in_var(--dur)_var(--ease-spring)]">
+          <p className="flex items-center justify-center gap-1.5 text-callout text-positive-strong">
             <CheckIcon size={16} strokeWidth={2.5} aria-hidden="true" />
-            {loggedKind === 'savings' ? 'Saved' : 'Logged'}
-          </span>
-        )}
-        {status === 'error' && (
-          <span role="alert" className="text-callout text-danger">
+            {result.type === 'savings' && result.goalName ? (
+              <span>
+                Saved <span className="tnum font-semibold">{formatCurrency(result.amount, { cents: false })}</span> toward{' '}
+                {titleCase(result.goalName)}
+              </span>
+            ) : (
+              <span>
+                Logged <span className="tnum font-semibold">{formatCurrency(result.amount, { cents: false })}</span> to{' '}
+                {titleCase(result.categoryName)}
+              </span>
+            )}
+          </p>
+          {showImpact && (
+            <ImpactReveal
+              amount={result.amount}
+              annualReturn={annualReturn}
+              house={houseHorizonValid ? house : undefined}
+              emphasizeHouse
+              className="origin-top"
+            />
+          )}
+        </div>
+      )}
+
+      {/* Category tiles. Quiet until an amount is entered, then the thing to tap. */}
+      <div role="group" aria-label="Log to a category" className="grid grid-cols-3 gap-2.5">
+        {categories.map((category) => (
+          <CategoryTile
+            key={category.id}
+            category={category}
+            disabled={!canLog}
+            saving={savingId === category.id}
+            onSelect={() => handlePick(category)}
+          />
+        ))}
+      </div>
+
+      <p aria-live="polite" className="min-h-[20px] text-center text-caption">
+        {errored ? (
+          <span role="alert" className="text-danger">
             Could not log that. Try again.
           </span>
-        )}
-      </div>
+        ) : !hasAmount && !result ? (
+          <span className="text-muted">Enter an amount, then tap a category.</span>
+        ) : null}
+      </p>
     </div>
+  )
+}
+
+// One category tile: icon over a short label, tinted in the category color. Inert and
+// dimmed until an amount is ready, so the gesture reads as "type, then tap to log".
+function CategoryTile({
+  category,
+  disabled,
+  saving,
+  onSelect,
+}: {
+  category: QuickAddCategory
+  disabled: boolean
+  saving: boolean
+  onSelect: () => void
+}) {
+  const Icon = resolveCategoryIcon(category.icon)
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      disabled={disabled}
+      aria-label={`Log to ${titleCase(category.name)}`}
+      className={cn(
+        'relative flex min-h-[76px] flex-col items-center justify-center gap-1.5 rounded-2xl px-2 py-3 transition duration-[var(--dur-fast)] ease-[var(--ease-spring)]',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+        disabled ? 'opacity-45' : 'active:scale-[0.96] motion-reduce:active:scale-100',
+      )}
+      style={{
+        backgroundColor: `color-mix(in srgb, ${category.color} 12%, transparent)`,
+        color: category.color,
+      }}
+    >
+      {saving ? (
+        <Spinner size={20} label={`Logging to ${titleCase(category.name)}`} />
+      ) : (
+        <Icon size={22} strokeWidth={1.75} aria-hidden="true" />
+      )}
+      <span className="line-clamp-1 text-caption font-medium">{titleCase(category.name)}</span>
+    </button>
   )
 }

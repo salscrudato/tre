@@ -41,7 +41,7 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
   async function handleLog(input: QuickAddInput) {
     await logExpense(input, house)
     // Close shortly after a successful write so the calm confirmation is seen first.
-    window.setTimeout(onClose, 650)
+    window.setTimeout(onClose, 1400)
   }
 
   async function handleScanImage(input: { imageBase64: string; mediaType: string }): Promise<ScanReceiptResult> {

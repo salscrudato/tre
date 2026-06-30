@@ -6,6 +6,7 @@ import { useLogExpense } from '../hooks/useLogExpense'
 import { discretionaryBudget } from '../lib/budget'
 import { monthBounds } from '../lib/summary'
 import { formatCurrency } from '../lib/format'
+import { cn } from '../lib/cn'
 import { DEFAULTS } from '../config/app'
 import type { ReceiptMediaType, ScanReceiptResult } from '../services/receipt'
 import { Card } from '../components/Card'
@@ -107,6 +108,7 @@ export default function Home() {
       <MonthGlance
         spent={discSpent}
         budget={discBudget}
+        today={today}
         loading={monthTx.isLoading}
         error={monthTx.isError}
       />
@@ -145,22 +147,31 @@ export default function Home() {
   )
 }
 
-// The single quiet glance: this month's spending money against its budget, one line and
-// one bar, tappable into the full Spending view. Nothing heavy.
+// The single quiet glance: this month's spending money against its budget, with a
+// real-time pace beside it (where the month is trending, from how much has elapsed),
+// tappable into the full Spending view. Nothing heavy.
 function MonthGlance({
   spent,
   budget,
+  today,
   loading,
   error,
 }: {
   spent: number
   budget: number
+  today: Date
   loading: boolean
   error: boolean
 }) {
   const noBudget = budget <= 0
   const left = budget - spent
   const over = !noBudget && left < 0
+  // Project the month-end spend from the share of the month already gone, so the couple
+  // sees where they are trending, not just where they stand today.
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
+  const dayOfMonth = today.getDate()
+  const projected = dayOfMonth > 0 ? (spent * daysInMonth) / dayOfMonth : spent
+  const projectedOver = !noBudget && projected > budget
   return (
     <Link
       to="/spending"
@@ -182,19 +193,29 @@ function MonthGlance({
               </span>
             </div>
             <ProgressBar value={spent} max={budget} showLabel={false} />
-            <span className="text-caption text-muted">
-              {noBudget ? (
-                'No spending budget set yet'
-              ) : over ? (
-                <>
-                  <span className="tnum text-danger">{formatCurrency(-left, { cents: false })}</span> over your spending money
-                </>
-              ) : (
-                <>
-                  <span className="tnum text-positive-strong">{formatCurrency(left, { cents: false })}</span> left to spend this month
-                </>
+            <div className="flex items-center justify-between gap-3 text-caption">
+              <span className="text-muted">
+                {noBudget ? (
+                  'No spending budget set yet'
+                ) : over ? (
+                  <>
+                    <span className="tnum text-danger">{formatCurrency(-left, { cents: false })}</span> over
+                  </>
+                ) : (
+                  <>
+                    <span className="tnum text-positive-strong">{formatCurrency(left, { cents: false })}</span> left to spend
+                  </>
+                )}
+              </span>
+              {!noBudget && (
+                <span className="text-muted">
+                  On pace for{' '}
+                  <span className={cn('tnum font-medium', projectedOver ? 'text-warning' : 'text-positive-strong')}>
+                    {formatCurrency(projected, { cents: false })}
+                  </span>
+                </span>
               )}
-            </span>
+            </div>
           </div>
         )}
       </Card>
