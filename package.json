@@ -1,0 +1,47 @@
+{
+  "name": "nest",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tre, a private two-person household finance PWA.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "emulators": "firebase emulators:start --only auth,firestore --import=./emulator-data --export-on-exit=./emulator-data",
+    "seed": "tsx scripts/seed.ts",
+    "seed:emulator": "firebase emulators:exec --only auth,firestore --export-on-exit=./emulator-data \"npm run seed\"",
+    "finalize": "tsx scripts/finalize.ts",
+    "correct-betterment": "tsx scripts/correct-betterment.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
+    "@tanstack/react-query": "^5.62.7",
+    "decimal.js": "^10.4.3",
+    "firebase": "^11.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.16",
+    "firebase-admin": "^12.7.0",
+    "globals": "^15.14.0",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1",
+    "vite": "^6.0.5",
+    "vite-plugin-pwa": "^0.21.1",
+    "vitest": "^2.1.9"
+  }
+}

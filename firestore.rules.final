@@ -1,0 +1,26 @@
+rules_version = '2';
+
+// FINAL production rules for Nest. Locked to the two household member UIDs.
+// scripts/finalize.ts replaces __SAL_UID__ and __LISA_UID__ with the real UIDs,
+// writes the result to firestore.rules, and deploys it. Do not deploy this file
+// directly: the temporary auth-only firestore.rules stays live until finalize, so
+// production Firestore stays empty and inaccessible to anyone but the two members.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isMember() {
+      return request.auth != null
+        && request.auth.uid in ['__SAL_UID__', '__LISA_UID__'];
+    }
+
+    match /households/{hid} {
+      allow read, update: if isMember();
+      allow create, delete: if false;
+
+      match /{document=**} {
+        allow read, write: if isMember();
+      }
+    }
+  }
+}
