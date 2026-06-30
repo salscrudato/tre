@@ -1,8 +1,17 @@
 import { cn } from '../lib/cn'
 
-// A gesture, not a chart: the growth curve drawn from the real projection points.
-// Stroke in the brand green with a soft area fill and a single end dot. No axes.
-export function GrowthSparkline({ points, className }: { points: number[]; className?: string }) {
+// A gesture, not a chart: the growth curve drawn from the real projection points,
+// with a soft area fill and a single end dot. No axes. The color defaults to the brand
+// green but can be set (the invest-instead reveal draws it in the wealth indigo).
+export function GrowthSparkline({
+  points,
+  color = 'var(--color-positive)',
+  className,
+}: {
+  points: number[]
+  color?: string
+  className?: string
+}) {
   const width = 300
   const height = 64
   if (points.length < 2) return null
@@ -30,17 +39,17 @@ export function GrowthSparkline({ points, className }: { points: number[]; class
       className={cn('h-16 w-full', className)}
       aria-hidden="true"
     >
-      <path d={area} fill="var(--color-positive)" fillOpacity="0.1" />
+      <path d={area} fill={color} fillOpacity="0.1" />
       <path
         d={line}
         fill="none"
-        stroke="var(--color-positive)"
+        stroke={color}
         strokeWidth="2.5"
         strokeLinecap="round"
         strokeLinejoin="round"
         vectorEffect="non-scaling-stroke"
       />
-      <circle cx={end.x} cy={end.y} r="3.5" fill="var(--color-positive)" vectorEffect="non-scaling-stroke" />
+      <circle cx={end.x} cy={end.y} r="3.5" fill={color} vectorEffect="non-scaling-stroke" />
     </svg>
   )
 }

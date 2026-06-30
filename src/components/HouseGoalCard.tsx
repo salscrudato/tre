@@ -135,8 +135,7 @@ export function HouseGoalCard({ house, today }: HouseGoalCardProps) {
           <span className="tnum font-semibold text-wealth">
             {formatCompactScaled(projected, compactScale(projected))}
           </span>{' '}
-          by {formatDate(house.targetDate, 'month')}
-          {hasExcess ? ', the extra grows as wealth' : ''}.
+          by {formatDate(house.targetDate, 'month')}.
         </p>
       )}
 
@@ -178,9 +177,8 @@ export function HouseGoalCard({ house, today }: HouseGoalCardProps) {
 
       {hasMix && (
         <p className="mt-3 text-caption text-muted">
-          Of this, <span className="tnum">{formatCurrency(house.houseSavingsCash, { cents: false })}</span> is cash
-          (stable) and <span className="tnum">{formatCurrency(house.houseSavingsInvested, { cents: false })}</span> is
-          invested and can move with the market.
+          <span className="tnum">{formatCurrency(house.houseSavingsCash, { cents: false })}</span> cash,{' '}
+          <span className="tnum">{formatCurrency(house.houseSavingsInvested, { cents: false })}</span> invested.
         </p>
       )}
 

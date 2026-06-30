@@ -192,7 +192,14 @@ function MonthGlance({
                 {!noBudget && <> of {formatCurrency(budget, { cents: false })}</>}
               </span>
             </div>
-            <ProgressBar value={spent} max={budget} showLabel={false} />
+            {!noBudget && (
+              <ProgressBar
+                value={spent}
+                max={budget}
+                showLabel={false}
+                markerPct={(dayOfMonth / daysInMonth) * 100}
+              />
+            )}
             <div className="flex items-center justify-between gap-3 text-caption">
               <span className="text-muted">
                 {noBudget ? (

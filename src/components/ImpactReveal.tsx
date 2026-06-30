@@ -15,6 +15,12 @@ import { cn } from '../lib/cn'
 const HORIZONS = [1, 10, 30] as const
 const AVG_WEEKS_PER_MONTH = 4.345
 
+const figureToneClass: Record<'ink' | 'positive' | 'wealth', string> = {
+  ink: 'text-ink',
+  positive: 'text-positive-strong',
+  wealth: 'text-wealth',
+}
+
 function MoneyFigure({
   value,
   label,
@@ -24,15 +30,13 @@ function MoneyFigure({
   value: number
   label: string
   compact?: boolean
-  tone?: 'ink' | 'positive'
+  tone?: 'ink' | 'positive' | 'wealth'
 }) {
   const animated = useCountUp(value)
   const text = compact ? formatCompactScaled(animated, compactScale(value)) : formatCurrency(animated)
   return (
     <div className="flex flex-col items-center gap-0.5">
-      <span className={cn('tnum text-h3', tone === 'positive' ? 'text-positive-strong' : 'text-ink')}>
-        {text}
-      </span>
+      <span className={cn('tnum text-h3', figureToneClass[tone])}>{text}</span>
       <span className="text-caption text-muted">{label}</span>
     </div>
   )
@@ -107,7 +111,7 @@ export function ImpactReveal({ amount, annualReturn, house, emphasizeHouse = fal
             <p className="mb-2 text-center text-caption text-muted">Or invested instead, it could become</p>
             <div className="grid grid-cols-3 gap-2">
               {oneTime.map((horizon) => (
-                <MoneyFigure key={horizon.years} value={horizon.value} label={`${horizon.years} yr`} />
+                <MoneyFigure key={horizon.years} value={horizon.value} label={`${horizon.years} yr`} tone="wealth" />
               ))}
             </div>
           </div>
@@ -120,14 +124,13 @@ export function ImpactReveal({ amount, annualReturn, house, emphasizeHouse = fal
           </div>
           <div className="grid grid-cols-3 gap-2">
             {oneTime.map((horizon) => (
-              <MoneyFigure key={horizon.years} value={horizon.value} label={`${horizon.years} yr`} />
+              <MoneyFigure key={horizon.years} value={horizon.value} label={`${horizon.years} yr`} tone="wealth" />
             ))}
           </div>
-          <GrowthSparkline points={points} className="mt-3" />
+          <GrowthSparkline points={points} color="var(--color-wealth)" className="mt-3" />
           <p className="mt-3 text-center text-callout text-ink-2">
             If this repeats every month, that is{' '}
-            <span className="tnum font-semibold text-positive-strong">{formatCurrency(recurring30)}</span> in 30
-            years.
+            <span className="tnum font-semibold text-wealth">{formatCurrency(recurring30)}</span> in 30 years.
           </p>
 
           {impact && house && (

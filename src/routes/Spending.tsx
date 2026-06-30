@@ -16,6 +16,7 @@ import { householdPlan, type HouseholdPlan } from '../lib/plan'
 import { buildBudgetView, savingsRateMonthly, type BudgetGroup, type CategoryRow } from '../lib/budget'
 import { addMonths, isoDate, monthBounds, monthlyNetIncome, yearBounds } from '../lib/summary'
 import { formatCurrency, formatDate, formatPercent, titleCase } from '../lib/format'
+import { cn } from '../lib/cn'
 import { DEFAULTS } from '../config/app'
 import { Card } from '../components/Card'
 import { Segmented } from '../components/Segmented'
@@ -124,21 +125,37 @@ export default function Spending() {
           <ErrorLine label="Could not load this period. Check your connection." />
         ) : (
           <div className="flex flex-col gap-5">
-            {/* The headline deliberately shows discretionary spend (not the all-logged
-                grand total view.monthSpent) so spent and the budget bar describe the
-                same set. Fixed bills are committed, shown below, never counted here. */}
-            <PeriodSummary
-              label="This month"
-              spent={view.discretionary.monthSpent}
-              budget={view.discMonthBudget}
-              dateLabel={formatDate(isoDate(today), 'month')}
-            />
+            {/* The plainest budget answer first: how much left our hands this month, the
+                committed fixed bills plus what we have logged. The discretionary detail,
+                where the budget bar applies, sits below. */}
+            <div className="flex flex-col gap-0.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-callout font-medium text-ink">Out this month</span>
+                <Money amount={view.committedFixedMonthly + view.discretionary.monthSpent} size="lg" cents={false} />
+              </div>
+              <span className="text-caption text-muted">
+                <span className="tnum">{formatCurrency(view.committedFixedMonthly, { cents: false })}</span> fixed plus{' '}
+                <span className="tnum">{formatCurrency(view.discretionary.monthSpent, { cents: false })}</span> spent
+              </span>
+            </div>
+            {/* The discretionary detail deliberately shows discretionary spend (not the
+                all-logged grand total) so spent and the budget bar describe the same set. */}
+            <div className="border-t border-line pt-5">
+              <PeriodSummary
+                label="This month"
+                spent={view.discretionary.monthSpent}
+                budget={view.discMonthBudget}
+                dateLabel={formatDate(isoDate(today), 'month')}
+                today={today}
+                pace
+              />
+            </div>
             <div className="border-t border-line pt-5">
               <PeriodSummary
                 label="This year"
                 spent={view.discretionary.yearSpent}
                 budget={discYearToDateBudget}
-                dateLabel={String(today.getFullYear())}
+                dateLabel={`${today.getFullYear()} so far`}
               />
             </div>
             <div className="flex items-end justify-between gap-4 border-t border-line pt-4">
@@ -160,7 +177,7 @@ export default function Spending() {
         ) : view.discretionary.rows.length === 0 ? (
           <Empty label="No discretionary categories yet. Add some in settings." />
         ) : (
-          <SpendGroup group={view.discretionary} yearBudget={discYearToDateBudget} />
+          <SpendGroup group={view.discretionary} />
         )}
       </Card>
 
@@ -379,17 +396,30 @@ function PeriodSummary({
   spent,
   budget,
   dateLabel,
+  today,
+  pace = false,
 }: {
   label: string
   spent: number
   budget: number
   dateLabel: string
+  // When pace is set (the current month), project the month-end spend and mark the share
+  // of the month elapsed on the bar, so the couple sees where they are trending.
+  today?: Date
+  pace?: boolean
 }) {
   // No budget set is a calm empty state, never an "over budget" alarm: show the spent
   // figure in the default tone with a plain note, and let the bar render empty.
   const noBudget = budget <= 0
   const remaining = budget - spent
   const over = !noBudget && remaining < 0
+
+  const showPace = pace && today != null && !noBudget
+  const daysInMonth = today ? new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate() : 30
+  const dayOfMonth = today ? today.getDate() : 0
+  const projected = showPace && dayOfMonth > 0 ? (spent * daysInMonth) / dayOfMonth : spent
+  const projectedOver = showPace && projected > budget
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between gap-2">
@@ -412,7 +442,21 @@ function PeriodSummary({
           )}
         </div>
       </div>
-      <ProgressBar value={spent} max={budget} showLabel={false} />
+      <ProgressBar
+        value={spent}
+        max={budget}
+        showLabel={false}
+        markerPct={showPace ? (dayOfMonth / daysInMonth) * 100 : undefined}
+      />
+      {showPace && (
+        <span className="text-caption text-muted">
+          On pace for{' '}
+          <span className={cn('tnum font-medium', projectedOver ? 'text-warning' : 'text-positive-strong')}>
+            {formatCurrency(projected, { cents: false })}
+          </span>{' '}
+          this month
+        </span>
+      )}
     </div>
   )
 }
@@ -420,7 +464,7 @@ function PeriodSummary({
 // A budgeted spend group (discretionary): each category with its month bar, then the
 // group totals and the one annual figure. Spent is logged only; a zero budget renders a
 // calm empty bar.
-function SpendGroup({ group, yearBudget }: { group: BudgetGroup; yearBudget: number }) {
+function SpendGroup({ group }: { group: BudgetGroup }) {
   return (
     <div className="flex flex-col gap-5">
       <ul className="flex flex-col gap-5">
@@ -428,22 +472,11 @@ function SpendGroup({ group, yearBudget }: { group: BudgetGroup; yearBudget: num
           <SpendRow key={row.category.id} row={row} />
         ))}
       </ul>
-      <div className="flex flex-col gap-2 border-t border-line pt-4">
-        <div className="flex items-center justify-between text-callout">
-          <span className="font-medium text-ink">Total this month</span>
-          <span className="tnum text-ink-2">
-            {formatCurrency(group.monthSpent, { cents: false })}
-            {group.monthBudget > 0 && <> of {formatCurrency(group.monthBudget, { cents: false })}</>}
-          </span>
-        </div>
-        <span className="text-caption text-muted">
-          This year: <span className="tnum">{formatCurrency(group.yearSpent, { cents: false })}</span>
-          {yearBudget > 0 && (
-            <>
-              {' '}
-              of <span className="tnum">{formatCurrency(yearBudget, { cents: false })}</span>
-            </>
-          )}
+      <div className="flex items-center justify-between border-t border-line pt-4 text-callout">
+        <span className="font-medium text-ink">Total this month</span>
+        <span className="tnum text-ink-2">
+          {formatCurrency(group.monthSpent, { cents: false })}
+          {group.monthBudget > 0 && <> of {formatCurrency(group.monthBudget, { cents: false })}</>}
         </span>
       </div>
     </div>
@@ -452,6 +485,7 @@ function SpendGroup({ group, yearBudget }: { group: BudgetGroup; yearBudget: num
 
 function SpendRow({ row }: { row: CategoryRow }) {
   const noBudget = row.monthBudget <= 0
+  const over = !noBudget && row.monthSpent > row.monthBudget
   return (
     <li className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
@@ -468,7 +502,10 @@ function SpendRow({ row }: { row: CategoryRow }) {
             <>{formatCurrency(row.monthSpent, { cents: false })} spent, no budget</>
           ) : (
             <>
-              {formatCurrency(row.monthSpent, { cents: false })} of {formatCurrency(row.monthBudget, { cents: false })}
+              <span className={cn(over && 'font-semibold text-danger')}>
+                {formatCurrency(row.monthSpent, { cents: false })}
+              </span>{' '}
+              of {formatCurrency(row.monthBudget, { cents: false })}
             </>
           )}
         </span>
@@ -556,7 +593,7 @@ function SavingsGroup({
   return (
     <div className="flex flex-col gap-5">
       {goals.length > 0 && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className={goals.length === 1 ? 'flex justify-center' : 'grid grid-cols-2 gap-3 sm:grid-cols-3'}>
           {goals.map((goal) => {
             const current = goal.id === houseGoalId && houseSavings != null ? houseSavings : goal.current
             const contribution = contributionByGoal.get(goal.id) ?? 0
@@ -584,7 +621,7 @@ function SavingsGroup({
                 value={current}
                 target={goal.target}
                 color={goal.color}
-                size={96}
+                size={goals.length === 1 ? 144 : 96}
                 label={titleCase(goal.name)}
                 caption={caption}
               />

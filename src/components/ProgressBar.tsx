@@ -12,6 +12,9 @@ export type ProgressBarProps = {
   currency?: boolean
   // Override the left-hand label text.
   label?: string
+  // Optional 0..100 tick (for example the share of the month elapsed), so the fill can
+  // be read against time: fill past the tick means spending faster than the month passes.
+  markerPct?: number
   className?: string
 }
 
@@ -30,10 +33,12 @@ export function ProgressBar({
   showLabel = true,
   currency = true,
   label,
+  markerPct,
   className,
 }: ProgressBarProps) {
   const pct = max > 0 ? (value / max) * 100 : 0
   const fillPct = Math.max(0, Math.min(pct, 100))
+  const showMarker = markerPct != null && markerPct > 0 && markerPct < 100
   const over = pct > 100
   const color = fillColor(pct)
 
@@ -52,7 +57,9 @@ export function ProgressBar({
   const valuesText = currency
     ? `${formatCurrency(value, { cents: false })} of ${formatCurrency(max, { cents: false })}`
     : `${Math.round(value)} of ${Math.round(max)}`
-  const ariaText = `${label ?? valuesText}, ${Math.round(pct)} percent${over ? ', over budget' : ''}`
+  const ariaText = `${label ?? valuesText}, ${Math.round(pct)} percent${over ? ', over budget' : ''}${
+    showMarker ? `, ${Math.round(markerPct)} percent of the month elapsed` : ''
+  }`
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
@@ -83,6 +90,9 @@ export function ProgressBar({
           opacity={over ? 1 : 0}
           style={{ transition: reduced ? undefined : 'opacity var(--dur-fast) var(--ease-spring)' }}
         />
+        {showMarker && (
+          <rect x={markerPct - 0.3} y="0" width="0.6" height="8" rx="0.3" fill="var(--color-ink-2)" opacity="0.4" />
+        )}
       </svg>
       {showLabel && (
         <div className="flex items-center justify-between text-caption">

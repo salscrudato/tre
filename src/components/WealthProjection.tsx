@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { futureValueOneTime, futureValueRecurring } from '../lib/money'
 import { useCountUp } from '../hooks/useCountUp'
 import { compactScale, formatCompactScaled, formatCurrency } from '../lib/format'
@@ -6,9 +6,11 @@ import { Explain } from './Explain'
 import { SparkleIcon } from './icons/ui'
 
 const HORIZONS = [10, 20, 30] as const
+const STEP = 250
 
 export type WealthProjectionProps = {
-  // The monthly amount we keep investing once the down payment is set (our surplus).
+  // The monthly amount we keep investing once the down payment is set (our surplus). It
+  // seeds the dial; the couple can explore saving more or less from there.
   monthly: number
   // The long-term investing return assumption (general, not the de-risked house rate).
   annualReturn: number
@@ -18,18 +20,21 @@ export type WealthProjectionProps = {
 }
 
 // The "what next" beyond the house: anything we save past the down payment is not slack,
-// it is long-term wealth. We project the monthly surplus (plus any current excess) at the
-// general investing return over 10, 20, and 30 years, shown in the wealth color so it
-// reads as a separate, growing bucket from the house goal. Calm and honest, a direction
-// not a promise.
+// it is long-term wealth. A dial (in $250 steps, seeded from our surplus) projects that
+// monthly amount, plus any current excess, at the general investing return over 10, 20,
+// and 30 years, shown in the wealth color so it reads as a separate, growing bucket.
+// Calm and honest, a direction not a promise.
 export function WealthProjection({ monthly, annualReturn, seed = 0, className }: WealthProjectionProps) {
+  const [amount, setAmount] = useState(Math.round(Math.max(0, monthly) / STEP) * STEP)
+  const sliderMax = Math.max(2500, Math.ceil((Math.max(monthly, amount) * 1.5) / STEP) * STEP)
+
   const figures = useMemo(
     () =>
       HORIZONS.map((years) => ({
         years,
-        value: futureValueOneTime(seed, years, annualReturn) + futureValueRecurring(monthly, years, annualReturn),
+        value: futureValueOneTime(seed, years, annualReturn) + futureValueRecurring(amount, years, annualReturn),
       })),
-    [monthly, annualReturn, seed],
+    [amount, annualReturn, seed],
   )
 
   if (monthly <= 0 && seed <= 0) return null
@@ -40,25 +45,35 @@ export function WealthProjection({ monthly, annualReturn, seed = 0, className }:
         <SparkleIcon size={18} aria-hidden="true" />
         <span className="text-caption font-semibold uppercase tracking-wide">Beyond the house</span>
       </div>
-      <p className="mt-2 text-callout text-ink-2">
-        {monthly > 0 ? (
-          <>
-            Anything we save past the down payment keeps growing. Invest about{' '}
-            <span className="tnum font-medium text-ink">{formatCurrency(monthly, { cents: false })}</span> a month and
-            it could become:
-          </>
-        ) : (
-          <>Our savings beyond the down payment keep growing. Invested, they could become:</>
-        )}
-      </p>
+      <p className="mt-2 text-callout text-ink-2">Anything we save past the down payment keeps growing.</p>
+
+      <div className="mt-4 flex flex-col gap-2">
+        <label htmlFor="wealth-monthly" className="flex items-baseline justify-between text-callout">
+          <span className="text-ink-2">Invest each month</span>
+          <span className="tnum font-semibold text-ink">{formatCurrency(amount, { cents: false })}</span>
+        </label>
+        <input
+          id="wealth-monthly"
+          type="range"
+          min={0}
+          max={sliderMax}
+          step={STEP}
+          value={amount}
+          aria-valuetext={`${formatCurrency(amount, { cents: false })} per month`}
+          onChange={(event) => setAmount(Number(event.target.value))}
+          className="range-wealth w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-wealth focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+        />
+      </div>
+
       <div className="mt-4 grid grid-cols-3 gap-2">
         {figures.map((figure) => (
           <WealthFigure key={figure.years} value={figure.value} label={`${figure.years} yr`} />
         ))}
       </div>
+
       <Explain className="mt-3" label="How is this projected?">
         This assumes we keep investing about{' '}
-        <span className="tnum">{formatCurrency(monthly, { cents: false })}</span> a month at{' '}
+        <span className="tnum">{formatCurrency(amount, { cents: false })}</span> a month at{' '}
         <span className="tnum">{Math.round(annualReturn * 100)}</span> percent a year, the return we assume for
         long-term investing. Markets move, so treat it as a direction, not a promise. Whatever we save beyond the down
         payment flows into this bucket.

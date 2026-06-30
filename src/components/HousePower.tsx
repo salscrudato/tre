@@ -3,7 +3,7 @@ import { addToSchedule, horizonIsValid, houseRunway, type ContributionSchedule, 
 import { useCountUp } from '../hooks/useCountUp'
 import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion'
 import { formatCurrency, formatPercent } from '../lib/format'
-import { HomeIcon } from './icons/nav'
+import { HouseKeyIcon } from './icons/nav'
 
 export type HousePowerProps = {
   house: HouseImpactInput & { baselineSchedule?: ContributionSchedule }
@@ -104,7 +104,7 @@ export function HousePower({ house, targetHomePrice, maxExtra, today, pitiMin, p
     return (
       <div className="rounded-xl bg-surface p-5 shadow-sm sm:p-6">
         <div className="flex items-center gap-2 text-accent-strong">
-          <HomeIcon size={18} />
+          <HouseKeyIcon size={18} />
           <span className="text-caption font-semibold uppercase tracking-wide">Home you can afford</span>
         </div>
         <p className="mt-2 text-body text-ink-2">
@@ -117,7 +117,7 @@ export function HousePower({ house, targetHomePrice, maxExtra, today, pitiMin, p
   return (
     <div className="rounded-xl bg-surface p-5 shadow-sm sm:p-6">
       <div className="flex items-center gap-2 text-accent-strong">
-        <HomeIcon size={18} />
+        <HouseKeyIcon size={18} />
         <span className="text-caption font-semibold uppercase tracking-wide">Home you can afford</span>
       </div>
       <p className="tnum mt-3 text-title font-bold text-ink">
@@ -179,8 +179,7 @@ export function HousePower({ house, targetHomePrice, maxExtra, today, pitiMin, p
           className="w-full accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
         />
         <p className="text-caption text-ink-2">
-          The full monthly payment (loan, taxes, insurance) we plan for. A higher payment buys more home. We save it as
-          our target.
+          The full monthly payment we plan for. Higher payment, more home. Saved as our target.
         </p>
       </div>
 
@@ -201,9 +200,8 @@ export function HousePower({ house, targetHomePrice, maxExtra, today, pitiMin, p
           className="w-full accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
         />
         <p className="text-caption text-ink-2">
-          Saving more buys more home, or with a lower payment above it eases the monthly cost. Beyond the down payment
-          it grows as wealth. {formatPercent(downReturn, { digits: downReturnDigits })} return on the down payment, every
-          other assumption from settings.
+          Save more to buy more home, or lower the payment to ease the monthly cost.{' '}
+          {formatPercent(downReturn, { digits: downReturnDigits })} return assumed.
         </p>
       </div>
     </div>

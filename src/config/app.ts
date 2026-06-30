@@ -18,7 +18,7 @@ export const DEFAULTS = {
   currency: 'USD',
   assumedAnnualReturn: 0.07,
   compoundingPerYear: 12,
-  housePurchaseTargetDate: '2028-01-01',
+  housePurchaseTargetDate: '2027-09-01',
   targetPitiMin: 5000,
   // The band's upper bound stays at or above the single target below, so the primary
   // target never sits outside its own advanced min/max band.

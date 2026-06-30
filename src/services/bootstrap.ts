@@ -72,7 +72,7 @@ const STARTER_ACCOUNTS: SeedAccount[] = [
 ]
 
 const STARTER_GOALS: SeedGoal[] = [
-  { id: 'goal_house', name: 'House Down Payment', target: 250000, current: 250000, targetDate: '2028-01-01', color: '#1FA85A', priority: 1, note: 'House savings, cash, Lisa, and the allocated Build Wealth slice. Derived from the flagged accounts.' },
+  { id: 'goal_house', name: 'House Down Payment', target: 250000, current: 250000, targetDate: '2027-09-01', color: '#1FA85A', priority: 1, note: 'House savings, cash, Lisa, and the allocated Build Wealth slice. Derived from the flagged accounts.' },
 ]
 
 const STARTER_BUDGET: Record<string, number> = {
@@ -104,7 +104,7 @@ export async function ensureHousehold(uid: string): Promise<void> {
   await setDoc(ref, {
     name: 'Tre',
     members: [uid],
-    invitedEmails: [],
+    invitedEmails: ['lisaalfuso@gmail.com'],
     settings: { ...DEFAULTS },
     createdAt: serverTimestamp(),
   })

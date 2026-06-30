@@ -82,7 +82,7 @@ export default function House() {
               </span>
               <span className="flex flex-col">
                 <span className="text-callout font-medium text-ink">Ways to save toward our home</span>
-                <span className="text-caption text-muted">Grounded ideas from our real numbers</span>
+                <span className="text-caption text-muted">Grounded in our real numbers</span>
               </span>
             </span>
             <ChevronRightIcon size={18} strokeWidth={2} className="shrink-0 text-muted" aria-hidden="true" />

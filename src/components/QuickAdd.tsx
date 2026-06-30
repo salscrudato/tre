@@ -101,7 +101,7 @@ export function QuickAdd({
   // discretionary impact reveal so it can be read.
   useEffect(() => {
     if (!result) return
-    const ms = result.type === 'variable' ? 6000 : 2200
+    const ms = result.type === 'variable' ? 4500 : 2000
     const id = window.setTimeout(() => setResult(null), ms)
     return () => window.clearTimeout(id)
   }, [result])
@@ -223,7 +223,10 @@ export function QuickAdd({
           <button
             type="button"
             onClick={() => setShowDate(true)}
-            className="inline-flex min-h-11 items-center gap-1.5 rounded-pill px-3 py-1.5 text-callout text-muted transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+            className={cn(
+              'inline-flex min-h-11 items-center gap-1.5 rounded-pill px-3 py-1.5 text-callout transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+              date === today ? 'text-muted' : 'text-ink-2',
+            )}
           >
             <CalendarIcon size={15} strokeWidth={1.75} aria-hidden="true" />
             {date === today ? 'Today' : formatDate(date)}
@@ -291,9 +294,11 @@ export function QuickAdd({
           <span role="alert" className="text-danger">
             Could not log that. Try again.
           </span>
-        ) : !hasAmount && !result ? (
+        ) : result ? null : hasAmount ? (
+          <span className="text-muted">Tap a category to log it.</span>
+        ) : (
           <span className="text-muted">Enter an amount, then tap a category.</span>
-        ) : null}
+        )}
       </p>
     </div>
   )

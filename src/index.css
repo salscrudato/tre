@@ -359,6 +359,15 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
+/* The wealth slider (Beyond the house) drags in its own indigo lane, so the control
+   matches the projected figures it moves rather than the brand green. */
+.range-wealth::-webkit-slider-thumb {
+  background: var(--color-wealth);
+}
+.range-wealth::-moz-range-thumb {
+  background: var(--color-wealth);
+}
+
 /* Respect reduced motion globally: disable transforms, transitions, count-ups */
 @media (prefers-reduced-motion: reduce) {
   *,
