@@ -53,6 +53,9 @@
   --color-accent-fill: var(--color-green-700);
   --color-warning: #ff9f0a;
   --color-danger: #d70015;
+  /* A calm indigo for projected potential and long-term wealth, distinct from the
+     brand green so "what we have" and "what it could become" never read as one number. */
+  --color-wealth: #5856d6;
 
   /* Category palette (chips and dashboard only, not chrome) */
   --color-cat-housing: #1fa85a;
@@ -152,6 +155,7 @@
   --color-on-accent: #ffffff;
   --color-accent-fill: var(--color-green-700);
   --color-danger: #d70015;
+  --color-wealth: #5856d6;
   --color-house-tint: color-mix(in srgb, var(--color-accent) 7%, var(--color-surface));
   /* Sticky-header glass: a higher surface mix in light so the frost reads on the
      off-white background. */
@@ -180,6 +184,8 @@
   /* Apple dark system reds and oranges, lifted to clear 4.5:1 on black. */
   --color-warning: #ffb340;
   --color-danger: #ff6b60;
+  /* Lifted indigo so the wealth/potential color stays vivid on near-black. */
+  --color-wealth: #8b88ff;
   /* Pure-black shadows so elevation reads on the near-black surfaces. */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
   --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.55);

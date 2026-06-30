@@ -1,10 +1,9 @@
 import { useMemo } from 'react'
-import { horizonIsValid, monthsUntil, paceReconciliationScheduled } from '../lib/money'
+import { horizonIsValid, paceReconciliationScheduled, projectedSavingsWithSchedule, yearsUntil } from '../lib/money'
 import type { HouseContext } from '../lib/house'
 import { useCountUp } from '../hooks/useCountUp'
 import { compactScale, formatCompactScaled, formatCurrency, formatDate } from '../lib/format'
 import { addMonths, isoDate } from '../lib/summary'
-import { ProgressBar } from './ProgressBar'
 import { Explain } from './Explain'
 import { HomeIcon } from './icons/nav'
 
@@ -36,12 +35,24 @@ export function HouseGoalCard({ house, today }: HouseGoalCardProps) {
       downReturn,
     )
     const paceDate = Number.isFinite(paceMonths) ? addMonths(today, paceMonths) : null
-    // How many whole months sooner than the target our pace reaches the goal, so we can
-    // celebrate being ahead of plan rather than just "on time".
-    const targetMonths = monthsUntil(house.targetDate, today)
-    const aheadMonths = Number.isFinite(paceMonths) ? Math.max(0, Math.round(targetMonths - paceMonths)) : 0
-    return { reached, valid, paceDate, onPace, extraNeeded: extraMonthlyNeeded, aheadMonths }
+    // What our saving pace projects we will actually have by the buy date. When that is
+    // more than the target, the extra is not slack to spend, it is wealth we keep
+    // building, so the bar grows past the goal and the surplus carries into the wealth
+    // projection. We never frame being ahead as a reason to ease off.
+    const projected = projectedSavingsWithSchedule(current, schedule, yearsUntil(house.targetDate, today), downReturn, today)
+    return { reached, valid, paceDate, onPace, extraNeeded: extraMonthlyNeeded, projected }
   }, [current, target, schedule, downReturn, house.targetDate, today])
+
+  // Bar segments on a 0..max scale (max grows past the target when projected exceeds it):
+  // solid green is what we have, a green tint is what the pace adds toward the goal, and
+  // the wealth color is the projected excess beyond the target.
+  const projected = calc.projected
+  const barMax = Math.max(target, projected, current, 1)
+  const currentPct = (current / barMax) * 100
+  const targetPct = (target / barMax) * 100
+  const tintPct = (Math.min(projected, target) / barMax) * 100
+  const projectedPct = (projected / barMax) * 100
+  const hasExcess = projected > target + 1
 
   // The current monthly contribution and, when income starts later, the higher amount it
   // steps to. Shown plainly so the pace below is grounded in our real, time-varying money.
@@ -85,14 +96,49 @@ export function HouseGoalCard({ house, today }: HouseGoalCardProps) {
         </div>
       </div>
 
-      <ProgressBar
-        className="mt-3"
-        value={current}
-        max={target}
-        currency={false}
-        showLabel={false}
-        label={`${Math.round(pct * 100)} percent of our ${formatCompactScaled(target, compactScale(target))} down payment`}
-      />
+      <svg
+        viewBox="0 0 100 8"
+        preserveAspectRatio="none"
+        className="mt-3 h-2.5 w-full"
+        role="img"
+        aria-label={`${Math.round(pct * 100)} percent of our ${formatCompactScaled(
+          target,
+          compactScale(target),
+        )} down payment, on pace for about ${formatCompactScaled(projected, compactScale(projected))} by the buy date`}
+      >
+        <rect x="0" y="0" width="100" height="8" rx="4" fill="var(--color-line)" />
+        {/* What the pace adds toward the goal (a quiet green tint). */}
+        <rect x="0" y="0" width={tintPct} height="8" rx="4" fill="var(--color-accent)" opacity="0.32" />
+        {/* The projected excess beyond the target, in the wealth color. */}
+        {hasExcess && (
+          <rect
+            x={targetPct}
+            y="0"
+            width={Math.max(0, projectedPct - targetPct)}
+            height="8"
+            rx="4"
+            fill="var(--color-wealth)"
+            opacity="0.6"
+          />
+        )}
+        {/* What we have today, solid. */}
+        <rect x="0" y="0" width={currentPct} height="8" rx="4" fill="var(--color-accent)" />
+        {/* The target marker, shown once the projection runs past it. */}
+        {hasExcess && (
+          <rect x={Math.max(0, targetPct - 0.5)} y="0" width="1" height="8" fill="var(--color-ink)" opacity="0.4" />
+        )}
+      </svg>
+
+      {calc.valid && projected > current + 1 && (
+        <p className="mt-2 text-caption text-muted">
+          On pace for{' '}
+          <span className="tnum font-semibold text-wealth">
+            {formatCompactScaled(projected, compactScale(projected))}
+          </span>{' '}
+          by {formatDate(house.targetDate, 'month')}
+          {hasExcess ? ', the extra grows as wealth' : ''}.
+        </p>
+      )}
 
       {calc.reached ? (
         <p className="mt-4 text-callout text-positive-strong">
@@ -114,13 +160,9 @@ export function HouseGoalCard({ house, today }: HouseGoalCardProps) {
                 : 'Set a contribution in Settings'
             }
           />
-          {calc.onPace && calc.aheadMonths >= 1 ? (
+          {calc.onPace ? (
             <p className="mt-1 text-callout font-medium text-positive-strong">
-              Ahead of plan by about {calc.aheadMonths} {calc.aheadMonths === 1 ? 'month' : 'months'}. Keep it up.
-            </p>
-          ) : calc.onPace ? (
-            <p className="mt-1 text-callout font-medium text-positive-strong">
-              On track to reach the target on time.
+              On track. Keep it up, and the extra keeps building.
             </p>
           ) : Number.isFinite(calc.extraNeeded) ? (
             <p className="mt-1 text-callout text-ink-2">

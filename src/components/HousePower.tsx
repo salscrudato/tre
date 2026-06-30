@@ -201,8 +201,9 @@ export function HousePower({ house, targetHomePrice, maxExtra, today, pitiMin, p
           className="w-full accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
         />
         <p className="text-caption text-ink-2">
-          Slide to see what saving more does to our home. {formatPercent(downReturn, { digits: downReturnDigits })}{' '}
-          return on the down payment, every other assumption from settings.
+          Saving more buys more home, or with a lower payment above it eases the monthly cost. Beyond the down payment
+          it grows as wealth. {formatPercent(downReturn, { digits: downReturnDigits })} return on the down payment, every
+          other assumption from settings.
         </p>
       </div>
     </div>

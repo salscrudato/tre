@@ -8,6 +8,7 @@ import { Card } from '../components/Card'
 import { Spinner } from '../components/Spinner'
 import { HouseGoalCard } from '../components/HouseGoalCard'
 import { HousePower } from '../components/HousePower'
+import { WealthProjection } from '../components/WealthProjection'
 
 // The House tab: the home we are saving for, kept to two ideas so it never overwhelms.
 // The down payment goal is the single glowing hero; below it sits the home we can
@@ -60,6 +61,12 @@ export default function House() {
         pitiMin={settings.targetPitiMin}
         pitiMax={settings.targetPitiMax}
         onPitiChange={(value) => updateSettings.mutate({ targetPiti: value })}
+      />
+
+      <WealthProjection
+        monthly={plan?.houseContributionMonthly ?? 0}
+        annualReturn={settings.assumedAnnualReturn}
+        seed={Math.max(0, house.houseSavings - house.downPaymentTarget)}
       />
 
       <Link

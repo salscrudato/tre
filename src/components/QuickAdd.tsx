@@ -320,21 +320,23 @@ function CategoryTile({
       disabled={disabled}
       aria-label={`Log to ${titleCase(category.name)}`}
       className={cn(
-        'relative flex min-h-[76px] flex-col items-center justify-center gap-1.5 rounded-2xl px-2 py-3 transition duration-[var(--dur-fast)] ease-[var(--ease-spring)]',
+        'relative flex h-[80px] flex-col items-center justify-center gap-1.5 rounded-[18px] px-1.5 transition duration-[var(--dur-fast)] ease-[var(--ease-spring)]',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
         disabled ? 'opacity-45' : 'active:scale-[0.96] motion-reduce:active:scale-100',
       )}
       style={{
-        backgroundColor: `color-mix(in srgb, ${category.color} 12%, transparent)`,
+        backgroundColor: `color-mix(in srgb, ${category.color} 13%, transparent)`,
         color: category.color,
       }}
     >
       {saving ? (
         <Spinner size={20} label={`Logging to ${titleCase(category.name)}`} />
       ) : (
-        <Icon size={22} strokeWidth={1.75} aria-hidden="true" />
+        <Icon size={23} strokeWidth={1.75} aria-hidden="true" />
       )}
-      <span className="line-clamp-1 text-caption font-medium">{titleCase(category.name)}</span>
+      <span className="line-clamp-2 text-center text-[12px] font-medium leading-tight text-ink">
+        {titleCase(category.name)}
+      </span>
     </button>
   )
 }
