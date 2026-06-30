@@ -17,8 +17,14 @@ export type BillFormData = {
   dueDay: number
   active: boolean
   lever: BillLever
-  // null clears any previously saved alternative.
+  // null clears the saved value (Firestore rejects undefined; see services/fixed.ts).
   alternativeAmount: number | null
+  // The month a bill stops (a lease ending, a loan payoff). null means it has no end.
+  endDate: string | null
+  // The goal a savings bill funds. Only meaningful when the lever is savings.
+  goalId: string | null
+  // An optional free-text note. null or blank means none.
+  note: string | null
 }
 
 function sanitizeAmount(raw: string): string {
@@ -26,6 +32,13 @@ function sanitizeAmount(raw: string): string {
   const firstDot = cleaned.indexOf('.')
   if (firstDot === -1) return cleaned
   return `${cleaned.slice(0, firstDot)}.${cleaned.slice(firstDot + 1).replace(/\./g, '').slice(0, 2)}`
+}
+
+// A full ISO end date ("2026-12-31") shows in a month input as "2026-12".
+function toMonthInput(value: string | undefined): string {
+  if (!value) return ''
+  const match = /^(\d{4})-(\d{2})/.exec(value)
+  return match ? `${match[1]}-${match[2]}` : ''
 }
 
 // Levers in plain language. "Treat as" decides how the bill maps to our home: housing
@@ -45,6 +58,7 @@ const LEVER_OPTIONS: Array<{ value: BillLever; label: string; hint: string }> = 
 export function BillSheet({
   bill,
   categories,
+  goals = [],
   impactCtx,
   onClose,
   onSubmit,
@@ -52,6 +66,8 @@ export function BillSheet({
 }: {
   bill?: FixedExpense
   categories: Category[]
+  // Savings goals a bill can fund, shown only when the lever is savings.
+  goals?: Array<{ id: string; name: string }>
   // House context for the live home-impact preview. Optional: without it the preview
   // shows the monthly saving but no home figure.
   impactCtx?: RecurringContext | null
@@ -67,6 +83,9 @@ export function BillSheet({
   const [alternative, setAlternative] = useState(
     bill?.alternativeAmount != null ? String(bill.alternativeAmount) : '',
   )
+  const [endMonth, setEndMonth] = useState(toMonthInput(bill?.endDate))
+  const [note, setNote] = useState(bill?.note ?? '')
+  const [goalId, setGoalId] = useState(bill?.goalId ?? '')
 
   const category = useMemo(() => categories.find((c) => c.id === categoryId), [categories, categoryId])
 
@@ -76,6 +95,11 @@ export function BillSheet({
   useEffect(() => {
     if (!leverTouched) setLever(defaultLever({ name }, category))
   }, [category, name, leverTouched])
+
+  // A savings bill should always fund a goal, so default to the first when none is set.
+  useEffect(() => {
+    if (lever === 'savings' && goalId === '' && goals.length > 0) setGoalId(goals[0].id)
+  }, [lever, goalId, goals])
 
   const amountValue = Number.parseFloat(amount)
   const dayValue = Number.parseInt(day, 10)
@@ -118,6 +142,10 @@ export function BillSheet({
       active,
       lever,
       alternativeAmount: showAlternative ? altNumber : null,
+      endDate: endMonth ? `${endMonth}-01` : null,
+      // Only a savings bill funds a goal; any other lever clears the link.
+      goalId: lever === 'savings' ? goalId || null : null,
+      note: note.trim() ? note.trim() : null,
     })
   }
 
@@ -202,6 +230,34 @@ export function BillSheet({
           <p className="text-caption text-muted">{LEVER_OPTIONS.find((o) => o.value === lever)?.hint}</p>
         </div>
 
+        {lever === 'savings' && goals.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-caption text-ink-2">Funds which goal</span>
+            <div role="radiogroup" aria-label="Goal this savings funds" className="flex flex-wrap gap-2">
+              {goals.map((g) => {
+                const selected = goalId === g.id
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => setGoalId(g.id)}
+                    className={cn(
+                      'min-h-11 rounded-pill px-3.5 py-1.5 text-callout font-medium transition active:scale-[0.97] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                      selected
+                        ? 'bg-[color-mix(in_srgb,var(--color-accent)_18%,transparent)] text-accent-strong shadow-[inset_0_0_0_1.5px_var(--color-accent)]'
+                        : 'bg-surface-2 text-ink-2',
+                    )}
+                  >
+                    {titleCase(g.name)}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {showAlternative && (
           <Field
             label="Cheaper option (optional)"
@@ -238,6 +294,13 @@ export function BillSheet({
           error={day.length > 0 && !dayValid ? 'Enter a day between 1 and 31.' : undefined}
           hint="Day of the month the bill is due."
         />
+        <Field
+          label="Ends (optional)"
+          type="month"
+          value={endMonth}
+          onChange={(event) => setEndMonth(event.target.value)}
+          hint="Leave blank for an ongoing bill. Set a month for one that stops, like a loan payoff."
+        />
         <div className="flex flex-col gap-1.5">
           <span className="text-caption text-ink-2">Status</span>
           <Segmented
@@ -250,6 +313,13 @@ export function BillSheet({
             ]}
           />
         </div>
+        <Field
+          label="Note (optional)"
+          placeholder="Anything to remember"
+          autoCapitalize="sentences"
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+        />
       </div>
     </Sheet>
   )

@@ -12,10 +12,10 @@ export function Logo({
   showWord?: boolean
 }) {
   return (
-    <span className={cn('inline-flex items-center gap-2 text-accent', className)}>
+    <span className={cn('inline-flex items-center gap-1.5 text-accent', className)}>
       <svg
-        width="26"
-        height="26"
+        width="22"
+        height="22"
         viewBox="112 125 300 300"
         xmlns="http://www.w3.org/2000/svg"
         aria-hidden="true"
@@ -31,7 +31,7 @@ export function Logo({
         <path d="M252 280 C 234 230, 186 196, 132 192 C 148 246, 192 286, 252 280 Z" fill="currentColor" />
       </svg>
       {showWord && (
-        <span className="text-[20px] font-[650] tracking-[-0.03em] text-ink">{APP_NAME}</span>
+        <span className="text-[18px] font-[650] tracking-[-0.03em] text-ink">{APP_NAME}</span>
       )}
     </span>
   )

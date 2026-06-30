@@ -141,6 +141,7 @@ function GoalSheet({
   const [current, setCurrent] = useState(goal ? String(goal.current) : '')
   const [targetDate, setTargetDate] = useState(goal?.targetDate ?? defaultDate)
   const [color, setColor] = useState(goal?.color ?? CATEGORY_PALETTE[0])
+  const [note, setNote] = useState(goal?.note ?? '')
 
   const locked = lockedCurrent != null
   const targetValue = Number.parseFloat(target)
@@ -176,6 +177,7 @@ function GoalSheet({
                 targetDate,
                 color,
                 priority: goal?.priority ?? nextPriority,
+                note: note.trim(),
               })
             }
           >
@@ -236,6 +238,13 @@ function GoalSheet({
             ))}
           </div>
         </div>
+        <Field
+          label="Note (optional)"
+          placeholder="Anything to remember"
+          autoCapitalize="sentences"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
       </div>
     </Sheet>
   )

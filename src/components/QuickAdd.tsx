@@ -225,7 +225,11 @@ export function QuickAdd({
         </p>
       )}
 
-      {hasAmount && (
+      {/* Show the invest-instead projection only for discretionary spending (dining,
+          other, and the like, the variable categories). Logging a true necessary expense
+          like rent or daycare should stay calm: the delayed-gratification framing there
+          would only discourage, never help. */}
+      {hasAmount && emphasizeHouse && (
         <ImpactReveal
           amount={amountValue}
           annualReturn={annualReturn}

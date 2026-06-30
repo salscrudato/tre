@@ -4,26 +4,33 @@ import { createInCol, listCol, removeFromCol, updateInCol } from './firestore'
 
 const NAME = 'fixedExpenses'
 
-// Writes accept a null alternativeAmount to mean "no cheaper option". Firestore
-// rejects undefined, so on create we omit the field and on update we delete it.
-export type FixedWrite = Omit<FixedExpense, 'id' | 'alternativeAmount'> & { alternativeAmount?: number | null }
-export type FixedPatch = Partial<Omit<FixedExpense, 'id' | 'alternativeAmount'>> & {
+// Optional fields that clear when blank. Firestore rejects undefined, so on create we
+// omit them and on update we delete them, so a bill row never carries an empty string,
+// a null goal, or a stale end date.
+const CLEARABLE = ['alternativeAmount', 'endDate', 'goalId', 'note'] as const
+const isBlank = (value: unknown) => value == null || value === ''
+
+// Writes accept null (or blank) for any clearable field to mean "remove it".
+type Clearable = {
   alternativeAmount?: number | null
+  endDate?: string | null
+  goalId?: string | null
+  note?: string | null
 }
+export type FixedWrite = Omit<FixedExpense, 'id' | keyof Clearable> & Clearable
+export type FixedPatch = Partial<Omit<FixedExpense, 'id' | keyof Clearable>> & Clearable
 
 export const listFixed = () => listCol<FixedExpense>(NAME, orderBy('dueDay', 'asc'))
 
 export const createFixed = (data: FixedWrite) => {
   const clean: Record<string, unknown> = { ...data }
-  if (clean.alternativeAmount == null) delete clean.alternativeAmount
+  for (const key of CLEARABLE) if (isBlank(clean[key])) delete clean[key]
   return createInCol<FixedExpense>(NAME, clean as Omit<FixedExpense, 'id'>)
 }
 
 export const updateFixed = (id: string, patch: FixedPatch) => {
   const clean: Record<string, unknown> = { ...patch }
-  if ('alternativeAmount' in clean && clean.alternativeAmount == null) {
-    clean.alternativeAmount = deleteField()
-  }
+  for (const key of CLEARABLE) if (key in clean && isBlank(clean[key])) clean[key] = deleteField()
   return updateInCol<FixedExpense>(NAME, id, clean as Partial<Omit<FixedExpense, 'id'>>)
 }
 

@@ -33,6 +33,7 @@ function settingsFingerprint(s: HouseholdSettings): string {
     s.targetPitiMin,
     s.targetPitiMax,
     s.targetPiti,
+    s.downPaymentTarget,
     s.housePurchaseTargetDate,
     s.targetHomePrice ?? '',
     s.houseContributionMonthly ?? '',
@@ -93,6 +94,7 @@ function AssumptionsForm({
   const [pitiMin, setPitiMin] = useState(String(settings.targetPitiMin))
   const [pitiMax, setPitiMax] = useState(String(settings.targetPitiMax))
   const [targetPiti, setTargetPiti] = useState(String(settings.targetPiti ?? DEFAULTS.targetPiti))
+  const [downPayment, setDownPayment] = useState(String(settings.downPaymentTarget))
   const [targetDate, setTargetDate] = useState(settings.housePurchaseTargetDate)
   const [showTargetHome, setShowTargetHome] = useState(settings.targetHomePrice != null)
   const [targetHomePrice, setTargetHomePrice] = useState(
@@ -118,6 +120,7 @@ function AssumptionsForm({
   const pMin = Number.parseFloat(pitiMin)
   const pMax = Number.parseFloat(pitiMax)
   const pTarget = Number.parseFloat(targetPiti)
+  const dp = Number.parseFloat(downPayment)
   const homePrice = Number.parseFloat(targetHomePrice)
   const hc = Number.parseFloat(houseContribution)
   const houseContributionOk = houseContribution.trim() === '' || (Number.isFinite(hc) && hc >= 0)
@@ -142,6 +145,8 @@ function AssumptionsForm({
     pTarget > 0 &&
     pTarget >= pMin &&
     pTarget <= pMax &&
+    Number.isFinite(dp) &&
+    dp > 0 &&
     (!showTargetHome || (Number.isFinite(homePrice) && homePrice > 0)) &&
     targetDate.length > 0
 
@@ -157,6 +162,7 @@ function AssumptionsForm({
       targetPiti: Math.round(pTarget * 100) / 100,
       targetPitiMin: Math.round(pMin * 100) / 100,
       targetPitiMax: Math.round(pMax * 100) / 100,
+      downPaymentTarget: Math.round(dp * 100) / 100,
       // Optional: when off, undefined removes the field so the dashboard hides the
       // target home price marker. The plan is the down payment goal, not a price.
       targetHomePrice: showTargetHome ? Math.round(homePrice * 100) / 100 : undefined,
@@ -262,6 +268,18 @@ function AssumptionsForm({
           )
         )}
       </div>
+
+      <Field
+        label="Down payment goal"
+        inputMode="decimal"
+        numeric
+        value={downPayment}
+        onChange={(e) => {
+          setDownPayment(onlyNumber(e.target.value))
+          setSaved(false)
+        }}
+        hint="The total we are saving for the down payment. Sets the house progress and the pace to our date."
+      />
 
       <Field
         label="Monthly house contribution"

@@ -161,6 +161,7 @@ function AccountSheet({
   // Optional partial allocation: blank means the full balance counts. Used for Build
   // Wealth, where only a slice closes the gap to the down payment goal.
   const [allocation, setAllocation] = useState(account?.houseAllocation != null ? String(account.houseAllocation) : '')
+  const [note, setNote] = useState(account?.note ?? '')
 
   const balanceValue = Number.parseFloat(balance)
   const allocationValue = Number.parseFloat(allocation)
@@ -196,6 +197,7 @@ function AccountSheet({
                   countsTowardHouse && allocation.trim() !== ''
                     ? Math.round(allocationValue * 100) / 100
                     : null,
+                note: note.trim(),
               })
             }
           >
@@ -250,6 +252,13 @@ function AccountSheet({
             hint="Leave blank to count the full balance. Set a portion (Build Wealth) to count only part toward the goal."
           />
         )}
+        <Field
+          label="Note (optional)"
+          placeholder="Anything to remember"
+          autoCapitalize="sentences"
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+        />
       </div>
     </Sheet>
   )

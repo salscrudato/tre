@@ -62,10 +62,10 @@ export type AmountFieldProps = {
 // entry reads as a confident hero while a six or seven figure amount still fits the
 // card at 390px without clipping. The leading $ scales off this same em base.
 function amountSize(digits: number): string {
-  if (digits <= 4) return 'text-[clamp(52px,17vw,80px)]'
-  if (digits <= 6) return 'text-[clamp(40px,13vw,58px)]'
-  if (digits <= 8) return 'text-[clamp(30px,10vw,46px)]'
-  return 'text-[clamp(24px,8vw,38px)]'
+  if (digits <= 4) return 'text-[clamp(40px,12vw,56px)]'
+  if (digits <= 6) return 'text-[clamp(32px,10vw,46px)]'
+  if (digits <= 8) return 'text-[clamp(26px,8vw,38px)]'
+  return 'text-[clamp(22px,7vw,32px)]'
 }
 
 // The hero money input for the Quick Add: the single most important control in the app.

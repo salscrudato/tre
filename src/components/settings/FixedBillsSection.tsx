@@ -116,6 +116,7 @@ export function FixedBillsSection() {
           key={sheet.mode === 'edit' ? sheet.bill.id : 'add'}
           bill={sheet.mode === 'edit' ? sheet.bill : undefined}
           categories={categories}
+          goals={goals}
           impactCtx={impactCtx}
           onClose={() => setSheet(null)}
           onSubmit={handleSubmit}
