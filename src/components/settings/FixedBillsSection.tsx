@@ -7,7 +7,7 @@ import { useGoals } from '../../hooks/useGoals'
 import { useAccounts } from '../../hooks/useAccounts'
 import { useHousehold } from '../../hooks/useHousehold'
 import { useToday } from '../../hooks/useToday'
-import { memberFromUser } from '../../lib/summary'
+import { billActiveOn, memberFromUser } from '../../lib/summary'
 import { titleCase } from '../../lib/format'
 import { horizonIsValid } from '../../lib/money'
 import { houseContext } from '../../lib/house'
@@ -60,7 +60,7 @@ export function FixedBillsSection() {
   // transportation, debt, utilities, insurance): money already spoken for each month.
   // This matches the engine (buildBudgetView) and the Monthly plan glance exactly.
   const committed = fixed
-    .filter((b) => b.active && categoryById.get(b.categoryId)?.type === 'fixed')
+    .filter((b) => b.active && billActiveOn(b, today) && categoryById.get(b.categoryId)?.type === 'fixed')
     .reduce((sum, b) => sum + b.amount, 0)
 
   return (

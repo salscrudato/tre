@@ -192,6 +192,34 @@ describe('recurringImpact', () => {
     if (impact.kind === 'discretionary-downgrade') expect(impact.saving).toBe(45)
   })
 
+  it('ignores a sub-dollar cheaper option so a row never claims "save $0" beside a home figure', () => {
+    // 99.90 is genuinely cheaper than 100 (hasAlternative is true) but the 0.10 saving
+    // would render "save $0 a month". It falls through to the honest full-cut path instead.
+    const disc = recurringImpact(
+      bill({ name: 'Netflix', amount: 20, categoryId: 'cat_subscriptions', alternativeAmount: 19.7 }),
+      subscriptions,
+      ctx,
+    )
+    expect(disc.kind).toBe('discretionary-cut')
+
+    const nec = recurringImpact(
+      bill({ name: 'PSEG', amount: 200, categoryId: 'cat_utilities', alternativeAmount: 199.8 }),
+      utilities,
+      ctx,
+    )
+    expect(nec).toEqual({ kind: 'utility-tier' })
+  })
+
+  it('keeps an alternative that saves at least a dollar', () => {
+    const impact = recurringImpact(
+      bill({ name: 'PSEG', amount: 200, categoryId: 'cat_utilities', alternativeAmount: 199 }),
+      utilities,
+      ctx,
+    )
+    expect(impact.kind).toBe('necessity-alt')
+    if (impact.kind === 'necessity-alt') expect(impact.saving).toBe(1)
+  })
+
   it('suppresses the home number when the horizon is invalid', () => {
     const impact = recurringImpact(
       bill({ name: 'Netflix', amount: 20, categoryId: 'cat_subscriptions' }),

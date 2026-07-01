@@ -153,11 +153,16 @@ export function recurringImpact(
 
   const alt = hasAlternative(bill)
   const difference = alt ? clampToCents(bill.amount - (bill.alternativeAmount as number)) : 0
+  // The saving is shown in whole dollars, so an alternative under fifty cents cheaper would
+  // read "save $0 a month" beside a real home figure. Require a saving that rounds to at
+  // least a dollar before treating the alternative as meaningful; otherwise the row falls
+  // through to the honest invite-a-cheaper-option or full-cut path.
+  const altMeaningful = alt && difference >= 0.5
 
   if (lever === 'necessity') {
     // A cheaper alternative is the same honest swap whatever the necessity is: keep the
     // need met, bank the difference, project that into the home.
-    if (alt) return { kind: 'necessity-alt', saving: difference, homePrice: homePriceFor(difference, ctx) }
+    if (altMeaningful) return { kind: 'necessity-alt', saving: difference, homePrice: homePriceFor(difference, ctx) }
     // No alternative set: show the one specific, real lever for this kind of cost, or
     // an honest note where there is no lever. Never a hollow "find a cheaper option".
     switch (necessityKind(bill, category)) {
@@ -182,8 +187,8 @@ export function recurringImpact(
     }
   }
 
-  // Discretionary: a downgrade when an alternative is set, otherwise a fair full cut.
-  if (alt) {
+  // Discretionary: a downgrade when a meaningful alternative is set, otherwise a fair cut.
+  if (altMeaningful) {
     return { kind: 'discretionary-downgrade', saving: difference, homePrice: homePriceFor(difference, ctx) }
   }
   return { kind: 'discretionary-cut', saving: bill.amount, homePrice: homePriceFor(bill.amount, ctx) }

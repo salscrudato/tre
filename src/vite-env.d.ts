@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+/// <reference types="vite-plugin-pwa/client" />
 
 // Typed environment variables so the Firebase config reads as string, not any.
 interface ImportMetaEnv {

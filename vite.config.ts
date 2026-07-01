@@ -35,6 +35,9 @@ export default defineConfig({
           if (id.includes('firebase') || id.includes('@firebase') || id.includes('protobufjs')) {
             return 'firebase-core'
           }
+          // Only the lazy Settings route imports Plaid Link; leaving it out of the eager
+          // vendor chunk keeps it off the critical path.
+          if (id.includes('react-plaid-link')) return undefined
           return 'vendor'
         },
       },
@@ -45,7 +48,11 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'apple-touch-icon-180.png'],
+      // We register the service worker ourselves in main.tsx so we can also check for a
+      // new version when the app returns to the foreground (see registerSW there).
+      // No includeAssets: globPatterns below already precaches the public assets, and
+      // listing them twice duplicated their precache entries.
+      injectRegister: false,
       manifest: {
         id: '/',
         name: 'Tre',
@@ -65,8 +72,16 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,woff2,png,svg,ico,webmanifest}'],
         navigateFallback: '/index.html',
+        // Never let the SW hijack Firebase reserved paths (/__/auth/* et al).
+        navigateFallbackDenylist: [/^\/__\//],
         cleanupOutdatedCaches: true,
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+        // A new version activates and claims open clients immediately, so an installed
+        // home-screen app never serves a stale shell once the update has downloaded. The
+        // page then reloads to the fresh content (see the controllerchange handler in
+        // main.tsx).
+        skipWaiting: true,
+        clientsClaim: true,
       },
     }),
   ],

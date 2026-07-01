@@ -14,6 +14,7 @@ import type { Category, FixedExpense, HouseholdSettings, Income, MemberName } fr
 import type { ContributionSchedule } from './money'
 import { discretionaryBudget } from './budget'
 import {
+  billActiveOn,
   isoDate,
   monthlyIncomeByOwnerAt,
   monthlyNetIncome,
@@ -92,7 +93,9 @@ export function householdPlan(input: HouseholdPlanInput): HouseholdPlan {
   const stepStart = nextIncomeStart(incomes, today)
   const incomeStepDate = stepStart ? isoDate(stepStart) : null
 
-  const activeBills = fixed.filter((f) => f.active)
+  // Only bills that are switched on and not past their end date count: an ended lease
+  // or a paid-off loan must not keep dragging the surplus, the pace, or the fixed total.
+  const activeBills = fixed.filter((f) => f.active && billActiveOn(f, today))
   const committedFixedMonthly = activeBills
     .filter((f) => typeById.get(f.categoryId) === 'fixed')
     .reduce((sum, f) => sum + f.amount, 0)

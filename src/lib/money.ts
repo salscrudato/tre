@@ -171,15 +171,20 @@ function parseLocalDate(iso: string): Date {
 export function yearsUntil(targetDate: string, today: Date): number {
   const ms = parseLocalDate(targetDate).getTime() - today.getTime()
   const years = ms / (365.25 * 24 * 60 * 60 * 1000)
-  return Math.max(0, years)
+  // A malformed or empty date parses to NaN; Math.max(0, NaN) is still NaN, which would
+  // leak into projections and render as NaN. Treat a bad date as zero horizon so every
+  // downstream figure stays finite (the UI separately shows a note for a non-future date).
+  return Number.isFinite(years) ? Math.max(0, years) : 0
 }
 
 // Signed months from today to the target date (negative once the date has passed).
 // The UI gates the home-impact display on this: a value at or below zero means the
 // date is today or in the past, so show a plain note instead of a degenerate number.
+// A malformed date returns zero so horizonIsValid reads false (rather than propagating NaN).
 export function monthsUntil(targetDate: string, today: Date): number {
   const ms = parseLocalDate(targetDate).getTime() - today.getTime()
-  return ms / ((365.25 / MONTHS_PER_YEAR) * 24 * 60 * 60 * 1000)
+  const months = ms / ((365.25 / MONTHS_PER_YEAR) * 24 * 60 * 60 * 1000)
+  return Number.isFinite(months) ? months : 0
 }
 
 // True when the target date is far enough out to project a meaningful home impact

@@ -23,9 +23,11 @@ import type { Income, IncomeFrequency, MemberName } from '../../types'
 
 type SheetState = { mode: 'add' } | { mode: 'edit'; income: Income } | null
 
+// Short single-word labels for the pill control, so the three options fit a phone screen
+// without overflow. The longer FREQUENCY_LABEL prose below is what sentences read from.
 const FREQUENCY_OPTIONS: Array<{ value: IncomeFrequency; label: string }> = [
-  { value: 'semimonthly', label: 'Twice a month' },
-  { value: 'biweekly', label: 'Every 2 weeks' },
+  { value: 'semimonthly', label: 'Semimonthly' },
+  { value: 'biweekly', label: 'Biweekly' },
   { value: 'monthly', label: 'Monthly' },
 ]
 
@@ -65,7 +67,7 @@ export function IncomeSection() {
               >
                 <span className="min-w-0">
                   <span className="flex items-center gap-1.5 truncate text-callout text-ink">
-                    {titleCase(income.name)} ({income.owner})
+                    {titleCase(income.name) || 'Income'} ({income.owner})
                     {income.startMonth && !incomeInEffect(income, today) && (
                       <span className="inline-flex shrink-0 items-center rounded-pill bg-surface-2 px-1.5 py-0.5 text-caption font-medium text-ink-2">
                         Starts {formatDate(income.startMonth, 'month')}
@@ -229,7 +231,7 @@ function IncomeSheet({
       }
     >
       <div className="flex flex-col gap-4">
-        <Field label="Name" placeholder="Employer" autoCapitalize="words" value={name} onChange={(e) => setName(e.target.value)} />
+        <Field label="Name" placeholder="Employer" autoCapitalize="words" autoFocus={!income} value={name} onChange={(e) => setName(e.target.value)} />
         <div className="flex flex-col gap-1.5">
           <span className="text-caption text-ink-2">Earner</span>
           <Segmented

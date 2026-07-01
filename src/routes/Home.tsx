@@ -4,12 +4,10 @@ import { useHouseModel } from '../hooks/useHouseModel'
 import { useTransactions } from '../hooks/useTransactions'
 import { useLogExpense } from '../hooks/useLogExpense'
 import { discretionaryBudget } from '../lib/budget'
-import { buildTrendContext } from '../lib/trends'
+import { recentNoteSuggestions } from '../lib/trends'
 import { monthBounds } from '../lib/summary'
 import { formatCurrency } from '../lib/format'
 import { cn } from '../lib/cn'
-import { DEFAULTS } from '../config/app'
-import type { ReceiptMediaType, ScanReceiptResult } from '../services/receipt'
 import { Card } from '../components/Card'
 import { ProgressBar } from '../components/ProgressBar'
 import { QuickAdd, type QuickAddInput } from '../components/QuickAdd'
@@ -35,16 +33,17 @@ function ErrorBlock({ label }: { label: string }) {
 
 // Home is for one thing: logging, with a light glance. The Quick Add hero is the only
 // glowing surface; below it sit one quiet line of this month's spending and the recent
-// activity. The house lives entirely on its own tab, never here. The delayed-gratification
-// framing still appears at the moment of logging, inside the impact reveal.
+// activity. The house lives entirely on its own tab, never here.
 export default function Home() {
-  const { settings, today, categories, categoriesLoading: catQueryLoading, goals, byCategoryId, house, horizonValid } =
+  const { settings, today, categories, categoriesLoading: catQueryLoading, goals, byCategoryId, house } =
     useHouseModel()
-  const annualReturn = settings?.assumedAnnualReturn ?? DEFAULTS.assumedAnnualReturn
 
   const { logExpense } = useLogExpense()
   const monthTx = useTransactions(monthBounds(today))
-  const recentTx = useTransactions({ max: 5 })
+  // One recent query serves two readers: the newest 50 seed the optional Other and
+  // Dining type-ahead, and the top 5 of the same result render the Recent list, so
+  // Home never runs a second Firestore read for a strict subset.
+  const recentTx = useTransactions({ max: 50 })
 
   // Hold the spinner until the category query actually resolves. Settings and categories
   // load on independent timelines, so checking only the (already-loaded) settings would
@@ -58,61 +57,43 @@ export default function Home() {
   )
 
   const quickCategories = useMemo(() => {
-    const mapped = categories.map((c) => ({ id: c.id, name: c.name, color: c.color, icon: c.icon, type: c.type }))
+    // Quick Add is for logging day-to-day spend, so show only the loggable (non-fixed)
+    // categories. Committed bills live in their own fixed categories and are never tapped
+    // here, which keeps the tile grid short even with a long, granular category list.
+    const mapped = categories
+      .filter((c) => c.type !== 'fixed')
+      .map((c) => ({ id: c.id, name: c.name, color: c.color, icon: c.icon, type: c.type }))
     if (mapped.some((c) => c.name.toLowerCase() === 'other')) return mapped
     return [...mapped, { id: 'cat_other', name: 'Other', color: 'var(--color-cat-other)', icon: 'dots', type: 'variable' as const }]
   }, [categories])
   const savingsGoals = useMemo(() => goals.map((g) => ({ id: g.id, name: g.name })), [goals])
-  const categoryNames = useMemo(() => categories.map((c) => c.name), [categories])
-  // A short summary of this month's spending, so the savings tip after logging Other or
-  // Dining is grounded in what we actually buy.
-  const trendContext = useMemo(
-    () => buildTrendContext(monthTx.transactions, categories),
-    [monthTx.transactions, categories],
-  )
-
-  const scanProvider =
-    settings?.receiptScanProvider === 'anthropic' || settings?.receiptScanProvider === 'grok'
-      ? settings.receiptScanProvider
-      : null
+  // Descriptions we have logged before, for the optional Other and Dining type-ahead.
+  const noteSuggestions = useMemo(() => recentNoteSuggestions(recentTx.transactions), [recentTx.transactions])
 
   async function handleLog(input: QuickAddInput) {
     await logExpense(input, house)
-  }
-
-  async function handleScanImage(input: { imageBase64: string; mediaType: string }): Promise<ScanReceiptResult> {
-    if (!scanProvider) return { amount: null }
-    const { scanReceipt } = await import('../services/receipt')
-    return scanReceipt({
-      imageBase64: input.imageBase64,
-      mediaType: input.mediaType as ReceiptMediaType,
-      provider: scanProvider,
-      categories: categoryNames,
-    })
   }
 
   const recent = recentTx.transactions.slice(0, 5)
 
   return (
     <div className="flex flex-col gap-6">
-      <Card padded={false} className="glow-accent p-6 sm:p-7">
+      <h1 className="sr-only">Home</h1>
+      <Card padded={false} className="glow-accent hero-tint p-6 sm:p-7">
         {categoriesLoading ? (
           <LoadingBlock label="Loading your categories" />
         ) : (
           <QuickAdd
             categories={quickCategories}
-            annualReturn={annualReturn}
-            house={house ?? undefined}
-            houseHorizonValid={horizonValid}
             savingsGoals={savingsGoals}
             onLog={handleLog}
-            trendContext={trendContext}
-            scanEnabled={scanProvider != null}
-            onScanImage={scanProvider != null ? handleScanImage : undefined}
+            noteSuggestions={noteSuggestions}
           />
         )}
       </Card>
 
+      {/* Daily-tracking order: the month's position right under the hero, then the
+          ledger tail. */}
       <MonthGlance
         spent={discSpent}
         budget={discBudget}
@@ -225,7 +206,7 @@ function MonthGlance({
               {!noBudget && (
                 <span className="text-muted">
                   On pace for{' '}
-                  <span className={cn('tnum font-medium', projectedOver ? 'text-warning' : 'text-positive-strong')}>
+                  <span className={cn('tnum font-medium', projectedOver ? 'text-warning-strong' : 'text-positive-strong')}>
                     {formatCurrency(projected, { cents: false })}
                   </span>
                 </span>

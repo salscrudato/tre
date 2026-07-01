@@ -27,6 +27,12 @@ export const updateAccount = (id: string, patch: AccountPatch) => {
 
 export const deleteAccount = (id: string) => removeFromCol(NAME, id)
 
+// Stop the Betterment sync for one account by deleting its Plaid link. The current
+// balance stays and becomes hand-editable again; the daily sync no longer touches it.
+export async function unlinkAccountFromPlaid(id: string): Promise<void> {
+  await updateDoc(docRef(NAME, id), { plaidAccountId: deleteField() })
+}
+
 // Atomic balance change (a savings contribution lands on the account), so concurrent
 // logs from either spouse never overwrite each other with a stale read.
 export async function creditAccount(id: string, delta: number): Promise<void> {

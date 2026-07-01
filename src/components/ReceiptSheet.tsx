@@ -5,31 +5,29 @@ import { Spinner } from './Spinner'
 import { CategoryChip } from './CategoryChip'
 import { SparkleIcon } from './icons/ui'
 import { ScanIcon } from './icons/Scan'
-import { analyzeReceipt, type AnalyzedReceipt, type ReceiptMediaType } from '../services/receipt'
-import { formatCurrency, titleCase } from '../lib/format'
+import { analyzeReceipt, type AnalyzedReceipt } from '../services/receipt'
+import { formatCurrency, formatDate, titleCase } from '../lib/format'
+import { imageFileToBase64 } from '../lib/image'
 import { todayISO } from '../lib/summary'
 import type { QuickAddInput } from './QuickAdd'
 import type { Category } from '../types'
 
 type Phase = 'pick' | 'analyzing' | 'review' | 'error'
 
-const SUPPORTED: Record<string, ReceiptMediaType> = {
-  'image/jpeg': 'image/jpeg',
-  'image/png': 'image/png',
-  'image/webp': 'image/webp',
-}
+const SUPPORTED = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = typeof reader.result === 'string' ? reader.result : ''
-      const comma = result.indexOf(',')
-      resolve(comma >= 0 ? result.slice(comma + 1) : result)
-    }
-    reader.onerror = () => reject(reader.error ?? new Error('Could not read the file.'))
-    reader.readAsDataURL(file)
-  })
+// The purchase date printed on the receipt, when it is a real calendar date and not in
+// the future; otherwise today. Guards a misread date from landing the expense in the
+// wrong month or ahead of now. ISO strings compare correctly as strings.
+function receiptDate(analyzed: AnalyzedReceipt): string {
+  const raw = analyzed.date?.trim() ?? ''
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw)
+  if (!match) return todayISO()
+  const [, y, m, d] = match
+  const parsed = new Date(Number(y), Number(m) - 1, Number(d))
+  const real =
+    parsed.getFullYear() === Number(y) && parsed.getMonth() === Number(m) - 1 && parsed.getDate() === Number(d)
+  return real && raw <= todayISO() ? raw : todayISO()
 }
 
 // Scan a receipt for savings: read the photo with Grok vision, show the total, the line
@@ -68,8 +66,7 @@ export function ReceiptSheet({
   }, [open])
 
   async function handleFile(file: File) {
-    const mediaType = SUPPORTED[file.type]
-    if (!mediaType) {
+    if (!SUPPORTED.has(file.type)) {
       setErrorText('Use a JPEG, PNG, or WebP photo.')
       setPhase('error')
       return
@@ -77,9 +74,11 @@ export function ReceiptSheet({
     setPhase('analyzing')
     setErrorText('')
     try {
-      const imageBase64 = await fileToBase64(file)
+      // Downscale on-device before upload, so a 6 MB phone photo becomes a fast few
+      // hundred KB without losing readability.
+      const { base64, mediaType } = await imageFileToBase64(file)
       const result = await analyzeReceipt({
-        imageBase64,
+        imageBase64: base64,
         mediaType,
         categories: categories.map((c) => c.name),
         context: trendContext,
@@ -106,7 +105,15 @@ export function ReceiptSheet({
     if (!analyzed || analyzed.total == null || !categoryId) return
     setLogging(true)
     try {
-      await onLog({ amount: analyzed.total, categoryId, date: todayISO() })
+      // Carry the receipt through: the merchant becomes the note, so the trend context
+      // learns what we actually buy, and the printed purchase date is used when valid.
+      const merchant = analyzed.merchant?.trim()
+      await onLog({
+        amount: analyzed.total,
+        categoryId,
+        date: receiptDate(analyzed),
+        ...(merchant ? { note: titleCase(merchant) } : {}),
+      })
       setLogged(true)
       window.setTimeout(onClose, 900)
     } catch {
@@ -120,6 +127,11 @@ export function ReceiptSheet({
   if (!open) return null
 
   const total = analyzed?.total ?? null
+  // What the log button will actually write, shown under the total so confirming is
+  // informed: the merchant (the note) and the purchase date it logs on.
+  const merchantRaw = analyzed?.merchant?.trim() ?? ''
+  const merchantLabel = merchantRaw ? titleCase(merchantRaw) : ''
+  const dateLabel = analyzed ? formatDate(receiptDate(analyzed), 'short') : ''
 
   return (
     <Sheet open onClose={onClose} title="Scan a receipt">
@@ -179,6 +191,11 @@ export function ReceiptSheet({
                 <span className="tnum text-display font-bold text-ink">
                   {total != null ? formatCurrency(total, { cents: false }) : 'Not found'}
                 </span>
+                {dateLabel.length > 0 && (
+                  <span className="text-caption text-muted">
+                    {merchantLabel ? `${merchantLabel}, ${dateLabel}` : dateLabel}
+                  </span>
+                )}
               </div>
 
               <div className="flex flex-col gap-1.5">

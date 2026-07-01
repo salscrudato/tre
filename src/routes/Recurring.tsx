@@ -5,9 +5,9 @@ import { PlusIcon } from '../components/icons/nav'
 import { useAuth } from '../context/auth-context'
 import { useFixed } from '../hooks/useFixed'
 import { useHouseModel } from '../hooks/useHouseModel'
-import { recurringImpact, type RecurringContext } from '../lib/recurring'
-import { memberFromUser, sumAmounts } from '../lib/summary'
-import { formatPercent, titleCase } from '../lib/format'
+import { recurringImpact, type RecurringContext, type RecurringImpact } from '../lib/recurring'
+import { billActiveOn, memberFromUser, sumAmounts } from '../lib/summary'
+import { formatDate, formatPercent, titleCase } from '../lib/format'
 import { resolveCategoryIcon } from '../config/icons'
 import { Card } from '../components/Card'
 import { Button } from '../components/Button'
@@ -40,7 +40,7 @@ export default function Recurring() {
   // Share the one reconciled model with every other screen, so the per-bill home impact
   // and the house contribution use the same stepped (September) schedule and the same
   // current income, never a flat or fully-ramped figure that disagrees with the rest.
-  const { plan, house, horizonValid, categories, goals, houseGoalId } = useHouseModel()
+  const { plan, house, horizonValid, categories, goals, houseGoalId, today } = useHouseModel()
   // useFixed again only for the bill mutations; React Query dedupes the shared read.
   const { fixed, isLoading, isError, create, update, remove } = useFixed()
 
@@ -60,21 +60,25 @@ export default function Recurring() {
   const [sheet, setSheet] = useState<SheetState>(null)
 
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
+  // Bills past their end date no longer count in any total or impact; they sit in a
+  // quiet Ended group at the bottom, still editable, never silently deleted.
+  const liveBills = useMemo(() => fixed.filter((bill) => billActiveOn(bill, today)), [fixed, today])
+  const endedBills = useMemo(() => fixed.filter((bill) => !billActiveOn(bill, today)), [fixed, today])
   // Current take-home (Lisa's pay starts in September), so the percent matches the rest.
   const income = plan?.incomeMonthly ?? 0
   // Recurring cost excludes savings contributions (the house bills): saving is not a
   // cost, and counting it here would overstate what our bills take from take-home.
   const totalFixed = sumAmounts(
-    fixed.filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type !== 'savings'),
+    liveBills.filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type !== 'savings'),
   )
   // The all-in total splits into two honest parts so it never reads as a contradiction
   // with the "Fixed bills" figure on Spending: the fixed bills (rent, daycare, the
-  // rest) and the recurring bills that sit inside our spending money (subscriptions).
+  // rest) and the recurring bills that sit inside our spending budget.
   const fixedOnly = sumAmounts(
-    fixed.filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type === 'fixed'),
+    liveBills.filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type === 'fixed'),
   )
   const inSpendingMoney = sumAmounts(
-    fixed.filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type === 'variable'),
+    liveBills.filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type === 'variable'),
   )
   const percentOfIncome = income > 0 ? totalFixed / income : 0
 
@@ -83,22 +87,37 @@ export default function Recurring() {
   // stay separate and individually editable.
   const activeHouseBills = useMemo(
     () =>
-      fixed
+      liveBills
         .filter((b) => b.active && houseGoalId != null && b.goalId === houseGoalId)
         .sort((a, b) => a.dueDay - b.dueDay),
-    [fixed, houseGoalId],
+    [liveBills, houseGoalId],
   )
   const consolidateHouse = activeHouseBills.length >= 2
   const listBills = useMemo(
-    () => (consolidateHouse ? fixed.filter((b) => !(b.active && b.goalId === houseGoalId)) : fixed),
-    [fixed, consolidateHouse, houseGoalId],
+    () => (consolidateHouse ? liveBills.filter((b) => !(b.active && b.goalId === houseGoalId)) : liveBills),
+    [liveBills, consolidateHouse, houseGoalId],
   )
+  // The per-bill home impact solves the house model per row, so compute it once per
+  // bills-and-context change instead of on every render of the list.
+  const impactByBillId = useMemo(() => {
+    const map = new Map<string, RecurringImpact>()
+    if (!impactCtx) return map
+    for (const bill of listBills) {
+      if (!bill.active) continue
+      map.set(bill.id, recurringImpact(bill, categoryById.get(bill.categoryId), impactCtx))
+    }
+    return map
+  }, [listBills, categoryById, impactCtx])
+
   const houseDepositsTotal = activeHouseBills.reduce((sum, b) => sum + b.amount, 0)
   const houseSavingsCategory = activeHouseBills[0] ? categoryById.get(activeHouseBills[0].categoryId) : undefined
-  const houseDepositsImpact =
-    consolidateHouse && impactCtx && activeHouseBills[0]
-      ? recurringImpact({ ...activeHouseBills[0], amount: houseDepositsTotal }, houseSavingsCategory, impactCtx)
-      : null
+  const houseDepositsImpact = useMemo(
+    () =>
+      consolidateHouse && impactCtx && activeHouseBills[0]
+        ? recurringImpact({ ...activeHouseBills[0], amount: houseDepositsTotal }, houseSavingsCategory, impactCtx)
+        : null,
+    [consolidateHouse, impactCtx, activeHouseBills, houseDepositsTotal, houseSavingsCategory],
+  )
   const depositDaysText = activeHouseBills.map((b) => `day ${b.dueDay}`).join(' and ')
 
   const createdBy: MemberName = memberFromUser(user)
@@ -125,7 +144,7 @@ export default function Recurring() {
         Spending
       </Link>
 
-      {!isLoading && !isError && fixed.length > 0 && (
+      {!isLoading && !isError && liveBills.length > 0 && (
         <Card>
           <div className="flex flex-col gap-1.5">
             <span className="text-caption text-muted">Recurring bills, each month</span>
@@ -142,7 +161,7 @@ export default function Recurring() {
                   <Money amount={fixedOnly} size="sm" tone="muted" cents={false} />
                 </div>
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-caption text-muted">Inside our spending money (subscriptions)</span>
+                  <span className="text-caption text-muted">Inside our spending budget</span>
                   <Money amount={inSpendingMoney} size="sm" tone="muted" cents={false} />
                 </div>
               </div>
@@ -186,11 +205,15 @@ export default function Recurring() {
           <p className="px-6 py-12 text-center text-callout text-muted">
             No bills yet. Add your first recurring cost.
           </p>
+        ) : liveBills.length === 0 ? (
+          <p className="px-6 py-12 text-center text-callout text-muted">
+            No current bills. Everything here has ended.
+          </p>
         ) : (
           <ul className="flex flex-col">
             {listBills.map((bill) => {
               const category = categoryById.get(bill.categoryId)
-              const impact = impactCtx && bill.active ? recurringImpact(bill, category, impactCtx) : null
+              const impact = impactByBillId.get(bill.id) ?? null
               return (
                 <li key={bill.id} className="border-b border-line last:border-b-0">
                   <button
@@ -249,6 +272,39 @@ export default function Recurring() {
           </ul>
         )}
       </Card>
+
+      {!isLoading && !isError && endedBills.length > 0 && (
+        <section aria-label="Ended bills" className="flex flex-col gap-2">
+          <h2 className="px-1 text-caption font-semibold uppercase tracking-wide text-muted">Ended</h2>
+          <Card padded={false} className="overflow-hidden">
+            <ul className="flex flex-col">
+              {endedBills.map((bill) => {
+                const category = categoryById.get(bill.categoryId)
+                return (
+                  <li key={bill.id} className="border-b border-line last:border-b-0">
+                    <button
+                      type="button"
+                      onClick={() => setSheet({ mode: 'edit', bill })}
+                      className="flex w-full flex-col gap-1.5 px-4 py-3 text-left transition-colors duration-[var(--dur-fast)] hover:bg-surface-2 active:bg-line-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+                    >
+                      <span className="flex items-center justify-between gap-3">
+                        <span className="truncate text-callout font-medium text-ink-2">{titleCase(bill.name)}</span>
+                        <Money amount={bill.amount} className="shrink-0" tone="muted" />
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <CategoryTag category={category} />
+                        {bill.endDate && (
+                          <span className="text-caption text-muted">Ended {formatDate(bill.endDate, 'month')}</span>
+                        )}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </Card>
+        </section>
+      )}
 
       {sheet && (
         <BillSheet

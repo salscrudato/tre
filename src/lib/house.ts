@@ -5,6 +5,7 @@ import {
   houseSavingsFromAccounts,
   houseSavingsInvestedFromAccounts,
 } from './accounts'
+import { billActiveOn } from './summary'
 
 export interface HouseContext extends HouseImpactInput {
   houseGoal: Goal
@@ -45,7 +46,7 @@ export function houseContext(
   const houseGoal = goals.find((g) => g.name.toLowerCase().includes('house'))
   if (!houseGoal) return null
   const scheduledBillsMonthly = fixed
-    .filter((f) => f.active && f.goalId === houseGoal.id)
+    .filter((f) => f.active && billActiveOn(f, today) && f.goalId === houseGoal.id)
     .reduce((sum, f) => sum + f.amount, 0)
   // Accept either a flat monthly amount (legacy callers, tests) or a full schedule. When
   // omitted, fall back to the scheduled house bills as a flat contribution.

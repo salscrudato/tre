@@ -8,23 +8,25 @@
 // Nothing is double counted: total spent is the sum of logged transactions only.
 
 import type { Category, CategoryType, FixedExpense, Transaction } from '../types'
+import { billActiveOn } from './summary'
 
 const MONTHS_PER_YEAR = 12
 
 // The one definition of the monthly savings rate, shared by Home, Spending, and
 // Optimize so they never disagree. Money out is the committed non-savings bills plus
 // logged spend in non-savings categories. Logging to a savings bucket is saving, not
-// spending, so it never lowers the rate.
+// spending, so it never lowers the rate. Bills past their end date no longer count.
 export function savingsRateMonthly(
   income: number,
   fixed: FixedExpense[],
   categories: Category[],
   monthTx: Transaction[],
+  today: Date = new Date(),
 ): number {
   if (income <= 0) return 0
   const typeById = new Map(categories.map((c) => [c.id, c.type]))
   const committedNonSavings = fixed
-    .filter((f) => f.active && typeById.get(f.categoryId) !== 'savings')
+    .filter((f) => f.active && billActiveOn(f, today) && typeById.get(f.categoryId) !== 'savings')
     .reduce((sum, f) => sum + f.amount, 0)
   const loggedNonSavings = monthTx
     .filter((t) => typeById.get(t.categoryId) !== 'savings')
@@ -83,12 +85,14 @@ function emptyGroup(type: CategoryType): BudgetGroup {
 
 // Build the full budget view. monthTx are this month's logged transactions; yearTx are
 // year-to-date logged transactions; byCategoryId is the monthly plan per category.
+// Bills past their end date are excluded from the committed totals and the row lists.
 export function buildBudgetView(
   categories: Category[],
   fixed: FixedExpense[],
   byCategoryId: Record<string, number>,
   monthTx: Transaction[],
   yearTx: Transaction[],
+  today: Date = new Date(),
 ): BudgetView {
   const monthByCat = new Map<string, number>()
   for (const tx of monthTx) monthByCat.set(tx.categoryId, sumIn(monthByCat, tx.categoryId) + tx.amount)
@@ -98,7 +102,7 @@ export function buildBudgetView(
   const committedByCat = new Map<string, number>()
   const billsByCat = new Map<string, FixedExpense[]>()
   for (const bill of fixed) {
-    if (!bill.active) continue
+    if (!bill.active || !billActiveOn(bill, today)) continue
     committedByCat.set(bill.categoryId, sumIn(committedByCat, bill.categoryId) + bill.amount)
     const list = billsByCat.get(bill.categoryId) ?? []
     list.push(bill)

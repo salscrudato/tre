@@ -4,7 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#f5f5f7" />
+    <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon-180.png" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -16,12 +17,38 @@
     <link rel="preconnect" href="https://securetoken.googleapis.com" crossorigin />
     <title>Tre</title>
     <script>
-      // Light by default, set before first paint to avoid a flash. No storage is used:
-      // the in-app moon toggle switches to dark for the session.
-      document.documentElement.setAttribute('data-theme', 'light')
+      // Light by default, set before first paint to avoid a flash. The in-app toggle
+      // persists the choice as a device preference so an installed app keeps its theme.
+      ;(function () {
+        var theme = 'light'
+        try {
+          var saved = localStorage.getItem('tre-theme')
+          if (saved === 'dark' || saved === 'light') theme = saved
+        } catch (e) {
+          // Storage unavailable (private mode): stay light.
+        }
+        document.documentElement.setAttribute('data-theme', theme)
+      })()
     </script>
   </head>
   <body>
+    <!-- The sprout paints before any JS boots, so an installed cold start shows the
+         brand instead of a blank page. React replaces it the moment it mounts. -->
+    <style>
+      #root:empty {
+        min-height: 100dvh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #root:empty::before {
+        content: '';
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        background: #1fa85a url('/favicon.svg') center / 60% no-repeat;
+      }
+    </style>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

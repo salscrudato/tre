@@ -20,7 +20,10 @@ export interface FindSavingsInput {
   context?: string
 }
 
-const callFindSavings = httpsCallable<FindSavingsInput, { ideas: SavingsIdea[] }>(functions, 'findSavings')
+// A 120 second timeout to match the other AI callables; the SDK default is 70 seconds.
+const callFindSavings = httpsCallable<FindSavingsInput, { ideas: SavingsIdea[] }>(functions, 'findSavings', {
+  timeout: 120_000,
+})
 
 // Ask Grok for cheaper, similar, or creative ways to save on one expense. Throws on a
 // transport or service error so the caller can show a retry; returns [] when the model

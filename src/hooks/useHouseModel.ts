@@ -20,12 +20,23 @@ export function useHouseModel() {
   const { household } = useHousehold()
   const settings = household?.settings ?? null
   const { categories, isLoading: categoriesLoading } = useCategories()
-  const { incomes } = useIncomes()
-  const { goals } = useGoals()
-  const { fixed } = useFixed()
-  const { byCategoryId } = useBudget()
-  const { accounts } = useAccounts()
+  const { incomes, isLoading: incomesLoading } = useIncomes()
+  const { goals, isLoading: goalsLoading } = useGoals()
+  const { fixed, isLoading: fixedLoading } = useFixed()
+  const { byCategoryId, isLoading: budgetLoading } = useBudget()
+  const { accounts, isLoading: accountsLoading } = useAccounts()
   const today = useToday()
+
+  // True until the household settings and every underlying read have settled, so
+  // screens can hold a spinner instead of flashing an empty state while data streams in.
+  const isLoading =
+    settings == null ||
+    categoriesLoading ||
+    incomesLoading ||
+    goalsLoading ||
+    fixedLoading ||
+    budgetLoading ||
+    accountsLoading
 
   const houseGoalId = useMemo(
     () => goals.find((g) => g.name.toLowerCase().includes('house'))?.id ?? null,
@@ -48,5 +59,5 @@ export function useHouseModel() {
 
   const horizonValid = house ? horizonIsValid(house.targetDate, today) : false
 
-  return { settings, today, categories, categoriesLoading, incomes, goals, fixed, accounts, byCategoryId, houseGoalId, plan, house, horizonValid }
+  return { settings, today, categories, categoriesLoading, incomes, goals, fixed, accounts, byCategoryId, houseGoalId, plan, house, horizonValid, isLoading }
 }

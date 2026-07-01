@@ -122,8 +122,8 @@ const MINOR_WORDS = new Set(['a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', '
 // Title-case a display name, preserving ALL-CAPS tokens (AT&T, PSEG, HSA) and
 // anything with an interior capital (iCloud, YouTube). Used on category, bill,
 // goal, and income names so "rent" reads as "Rent" on save and on display.
-export function titleCase(input: string): string {
-  const trimmed = input.trim()
+export function titleCase(input: string | null | undefined): string {
+  const trimmed = (input ?? '').trim()
   if (trimmed.length === 0) return ''
   const words = trimmed.split(/\s+/)
   return words
@@ -140,8 +140,8 @@ export function titleCase(input: string): string {
 }
 
 // Capitalize only the first letter (for free-text notes), leaving the rest as is.
-export function capitalizeFirst(input: string): string {
-  const trimmed = input.trim()
+export function capitalizeFirst(input: string | null | undefined): string {
+  const trimmed = (input ?? '').trim()
   if (trimmed.length === 0) return ''
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
 }

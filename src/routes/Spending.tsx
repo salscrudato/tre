@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ChevronLeftIcon, ChevronRightIcon } from '../components/icons/ui'
+import { ChevronLeftIcon, ChevronRightIcon, SparkleIcon } from '../components/icons/ui'
 import { Link } from 'react-router-dom'
 import { useHousehold } from '../hooks/useHousehold'
 import { useCategories } from '../hooks/useCategories'
@@ -14,7 +14,7 @@ import { monthsToReach, monthsToReachWithSchedule, type ContributionSchedule } f
 import { houseContext } from '../lib/house'
 import { householdPlan, type HouseholdPlan } from '../lib/plan'
 import { buildBudgetView, savingsRateMonthly, type BudgetGroup, type CategoryRow } from '../lib/budget'
-import { addMonths, isoDate, monthBounds, monthlyNetIncome, yearBounds } from '../lib/summary'
+import { addMonths, billActiveOn, isoDate, monthBounds, monthlyNetIncome, yearBounds } from '../lib/summary'
 import { formatCurrency, formatDate, formatPercent, titleCase } from '../lib/format'
 import { cn } from '../lib/cn'
 import { DEFAULTS } from '../config/app'
@@ -85,6 +85,16 @@ export default function Spending() {
   const elapsedMonths = today.getMonth() + today.getDate() / daysInThisMonth
   const discYearToDateBudget = view.discMonthBudget * elapsedMonths
 
+  // One quiet door to Optimize when the month is already over budget or trending over
+  // (the same pace projection the summary shows). An invitation, never an alarm.
+  const projectedMonthSpend =
+    today.getDate() > 0
+      ? (view.discretionary.monthSpent * daysInThisMonth) / today.getDate()
+      : view.discretionary.monthSpent
+  const showWaysToSave =
+    view.discMonthBudget > 0 &&
+    (view.discretionary.monthSpent > view.discMonthBudget || projectedMonthSpend > view.discMonthBudget)
+
   // Savings rate from the one shared definition, so Home, Spending, and Optimize agree.
   const savingsRate = useMemo(
     () => savingsRateMonthly(income, fixed, categories, mtdTx.transactions),
@@ -94,10 +104,10 @@ export default function Spending() {
   // The house goal's projected date uses our real monthly contribution (the surplus), so
   // the savings ring matches the House tab instead of the small auto-transfer line.
   const contributionByGoal = useMemo(() => {
-    const map = savingsContribution(fixed)
+    const map = savingsContribution(fixed, today)
     if (houseGoalId && plan) map.set(houseGoalId, plan.houseContributionMonthly)
     return map
-  }, [fixed, houseGoalId, plan])
+  }, [fixed, houseGoalId, plan, today])
 
   // The cash portion of our house savings (counts toward the house now; we rebuild a
   // buffer after we buy). Uses the same counted amount as the house meter.
@@ -116,6 +126,7 @@ export default function Spending() {
 
   return (
     <div className="flex flex-col gap-6">
+      <h1 className="sr-only">Spending</h1>
       {plan && <TeamMoney plan={plan} />}
 
       <Card title="Where we are">
@@ -156,6 +167,8 @@ export default function Spending() {
                 spent={view.discretionary.yearSpent}
                 budget={discYearToDateBudget}
                 dateLabel={`${today.getFullYear()} so far`}
+                remainingLabel="under plan so far"
+                overLabel="over plan"
               />
             </div>
             <div className="flex items-end justify-between gap-4 border-t border-line pt-4">
@@ -168,6 +181,29 @@ export default function Spending() {
           </div>
         )}
       </Card>
+
+      {!periodLoading && !periodError && showWaysToSave && (
+        <Link
+          to="/optimize"
+          aria-label="Ways to save"
+          className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+        >
+          <Card className="transition active:scale-[0.99] motion-reduce:active:scale-100">
+            <div className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--color-accent)_12%,transparent)] text-accent-strong">
+                  <SparkleIcon size={18} strokeWidth={2} aria-hidden="true" />
+                </span>
+                <span className="flex flex-col">
+                  <span className="text-callout font-medium text-ink">Ways to save</span>
+                  <span className="text-caption text-muted">See ideas grounded in our real numbers</span>
+                </span>
+              </span>
+              <ChevronRightIcon size={18} strokeWidth={2} className="shrink-0 text-muted" aria-hidden="true" />
+            </div>
+          </Card>
+        </Link>
+      )}
 
       <Card title="Discretionary">
         {categoriesLoading || periodLoading ? (
@@ -262,7 +298,7 @@ export default function Spending() {
             ) : history.isError ? (
               <ErrorLine label="Could not load transactions. Check your connection." />
             ) : filteredHistory.length === 0 ? (
-              <Empty label="No expenses logged this month. Log one from Home." />
+              <Empty label="No expenses logged this month yet. Tap the plus button to log one." />
             ) : (
               <RecentTransactions
                 transactions={filteredHistory}
@@ -398,6 +434,8 @@ function PeriodSummary({
   dateLabel,
   today,
   pace = false,
+  remainingLabel = 'left to spend',
+  overLabel = 'over budget',
 }: {
   label: string
   spent: number
@@ -407,6 +445,10 @@ function PeriodSummary({
   // of the month elapsed on the bar, so the couple sees where they are trending.
   today?: Date
   pace?: boolean
+  // The year row compares against a prorated plan, not a hard monthly budget, so it can
+  // pass calmer wording ("under plan so far", "over plan") for the same numbers.
+  remainingLabel?: string
+  overLabel?: string
 }) {
   // No budget set is a calm empty state, never an "over budget" alarm: show the spent
   // figure in the default tone with a plain note, and let the bar render empty.
@@ -417,6 +459,7 @@ function PeriodSummary({
   const showPace = pace && today != null && !noBudget
   const daysInMonth = today ? new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate() : 30
   const dayOfMonth = today ? today.getDate() : 0
+  const daysLeft = daysInMonth - dayOfMonth
   const projected = showPace && dayOfMonth > 0 ? (spent * daysInMonth) / dayOfMonth : spent
   const projectedOver = showPace && projected > budget
 
@@ -436,8 +479,9 @@ function PeriodSummary({
             <span className="text-caption text-muted">no budget set</span>
           ) : (
             <>
-              <Money amount={Math.max(0, remaining)} size="md" tone={over ? 'negative' : 'positive'} cents={false} />
-              <span className="text-caption text-muted">{over ? 'over budget' : 'left to spend'}</span>
+              {/* Over budget shows the real overage, never a red zero. */}
+              <Money amount={Math.abs(remaining)} size="md" tone={over ? 'negative' : 'positive'} cents={false} />
+              <span className="text-caption text-muted">{over ? overLabel : remainingLabel}</span>
             </>
           )}
         </div>
@@ -451,10 +495,18 @@ function PeriodSummary({
       {showPace && (
         <span className="text-caption text-muted">
           On pace for{' '}
-          <span className={cn('tnum font-medium', projectedOver ? 'text-warning' : 'text-positive-strong')}>
+          <span className={cn('tnum font-medium', projectedOver ? 'text-warning-strong' : 'text-positive-strong')}>
             {formatCurrency(projected, { cents: false })}
           </span>{' '}
           this month
+        </span>
+      )}
+      {/* The actionable day rate, only while there is still headroom and days to spread
+          it over. An over-budget month gets no per-day scold. */}
+      {showPace && remaining > 0 && daysLeft > 0 && (
+        <span className="text-caption text-muted">
+          {daysLeft} {daysLeft === 1 ? 'day' : 'days'} left, about{' '}
+          <span className="tnum">{formatCurrency(remaining / daysLeft, { cents: false })}</span>/day to stay on budget
         </span>
       )}
     </div>
@@ -488,16 +540,16 @@ function SpendRow({ row }: { row: CategoryRow }) {
   const over = !noBudget && row.monthSpent > row.monthBudget
   return (
     <li className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-2 text-callout text-ink">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-2 text-callout text-ink">
           <span
             className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
             style={{ backgroundColor: row.category.color }}
             aria-hidden="true"
           />
-          {titleCase(row.category.name)}
+          <span className="truncate">{titleCase(row.category.name)}</span>
         </span>
-        <span className="tnum text-caption text-ink-2">
+        <span className="tnum shrink-0 text-caption text-ink-2">
           {noBudget ? (
             <>{formatCurrency(row.monthSpent, { cents: false })} spent, no budget</>
           ) : (
@@ -524,16 +576,16 @@ function FixedGroup({ group }: { group: BudgetGroup }) {
       <ul className="flex flex-col gap-4">
         {rows.map((row) => (
           <li key={row.category.id} className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className="flex items-center gap-2 text-callout font-medium text-ink">
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <span className="flex min-w-0 items-center gap-2 text-callout font-medium text-ink">
                 <span
                   className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
                   style={{ backgroundColor: row.category.color }}
                   aria-hidden="true"
                 />
-                {titleCase(row.category.name)}
+                <span className="truncate">{titleCase(row.category.name)}</span>
               </span>
-              <Money amount={row.committedMonthly} cents={false} />
+              <Money amount={row.committedMonthly} cents={false} className="shrink-0" />
             </div>
             <ul className="flex flex-col gap-0.5 pl-4.5">
               {row.bills.map((bill) => (
@@ -666,11 +718,14 @@ function SavingsGroup({
   )
 }
 
-// Active savings contributions by the goal they fund, for the projected dates.
-function savingsContribution(fixed: import('../types').FixedExpense[]): Map<string, number> {
+// Active savings contributions by the goal they fund, for the projected dates. Ended
+// bills stop funding a goal, matching the plan and budget engines.
+function savingsContribution(fixed: import('../types').FixedExpense[], today: Date): Map<string, number> {
   const map = new Map<string, number>()
   for (const bill of fixed) {
-    if (bill.active && bill.goalId) map.set(bill.goalId, (map.get(bill.goalId) ?? 0) + bill.amount)
+    if (bill.active && billActiveOn(bill, today) && bill.goalId) {
+      map.set(bill.goalId, (map.get(bill.goalId) ?? 0) + bill.amount)
+    }
   }
   return map
 }

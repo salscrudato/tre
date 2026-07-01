@@ -86,6 +86,17 @@ export function MoonIcon(props: IconProps) {
   )
 }
 
+// A box with an arrow leaving it: opens a retailer page in a new tab.
+export function ExternalLinkIcon(props: IconProps) {
+  return (
+    <Base strokeWidth={2} {...props}>
+      <path d="M14 4.5h5.5V10" />
+      <path d="M19.5 4.5 11 13" />
+      <path d="M18 13.5v4A1.5 1.5 0 0 1 16.5 19h-10A1.5 1.5 0 0 1 5 17.5v-10A1.5 1.5 0 0 1 6.5 6h4" />
+    </Base>
+  )
+}
+
 // A circled exclamation: an error or alert.
 export function AlertIcon(props: IconProps) {
   return (

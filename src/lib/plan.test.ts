@@ -110,6 +110,44 @@ describe('householdPlan', () => {
   })
 })
 
+describe('householdPlan with a bill past its end date', () => {
+  const today = new Date(2026, 5, 30) // June 30, 2026
+
+  it('excludes an ended fixed bill from committed costs and the surplus', () => {
+    const withEnded: FixedExpense[] = [
+      ...fixed,
+      bill({ id: 'fx_lease', name: 'Car Lease', amount: 400, categoryId: 'cat_utilities', endDate: '2026-03-01' }),
+    ]
+    const plan = householdPlan({ settings: {}, ...base, fixed: withEnded, today })
+    // Same as without the lease: it ended in March and must not drag the plan.
+    expect(plan.committedFixedMonthly).toBe(6150)
+    expect(plan.surplusMonthly).toBe(9850)
+    expect(plan.houseContributionMonthly).toBe(9850)
+  })
+
+  it('still counts a bill whose end date is ahead', () => {
+    const withFutureEnd: FixedExpense[] = [
+      ...fixed,
+      bill({ id: 'fx_lease', name: 'Car Lease', amount: 400, categoryId: 'cat_utilities', endDate: '2026-12-01' }),
+    ]
+    const plan = householdPlan({ settings: {}, ...base, fixed: withFutureEnd, today })
+    expect(plan.committedFixedMonthly).toBe(6550)
+    expect(plan.surplusMonthly).toBe(9450)
+  })
+
+  it('excludes an ended savings bill from goal contributions', () => {
+    const withEnded: FixedExpense[] = [
+      ...fixed,
+      bill({ id: 'fx_old', name: 'Old House Savings', amount: 300, categoryId: 'cat_savings', goalId: 'goal_house', endDate: '2026-01-01' }),
+      bill({ id: 'fx_529', name: '529 Plan', amount: 250, categoryId: 'cat_savings', goalId: 'goal_college', endDate: '2026-02-01' }),
+    ]
+    const plan = householdPlan({ settings: {}, ...base, fixed: withEnded, today })
+    expect(plan.houseSavingsBillsMonthly).toBe(550)
+    expect(plan.otherGoalContributionsMonthly).toBe(0)
+    expect(plan.surplusMonthly).toBe(9850)
+  })
+})
+
 describe('householdPlan with a time-varying income (Lisa starts in September)', () => {
   const today = new Date(2026, 5, 30) // June 30, 2026, before September
   // Lisa's pay starts in September; Sal's is already in effect.

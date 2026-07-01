@@ -12,7 +12,13 @@ import { capitalizeFirst, clampToCents, formatCurrency, formatDate, sanitizeAmou
 import { todayISO } from '../lib/summary'
 import { cn } from '../lib/cn'
 import { findSavings, type SavingsIdea } from '../services/savings'
+import { buildTrendContext } from '../lib/trends'
 import type { Category, Transaction } from '../types'
+
+// A recurring-looking expense (a subscription, a membership, an explicitly monthly
+// charge) is asked about as a monthly cost, so the savings ideas quantify its real
+// ongoing weight instead of treating it as a single purchase.
+const RECURRING_HINT = /subscription|membership|monthly/i
 
 type TxPatch = { amount?: number; categoryId?: string; date?: string; note?: string }
 
@@ -36,6 +42,9 @@ export function RecentTransactions({
 }: RecentTransactionsProps) {
   const [editing, setEditing] = useState<Transaction | null>(null)
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
+  // A one-line summary of what the household actually buys, so the opt-in savings finder
+  // in the edit sheet gives personalized ideas instead of generic tips.
+  const trendContext = useMemo(() => buildTrendContext(transactions, categories), [transactions, categories])
 
   return (
     <>
@@ -83,6 +92,7 @@ export function RecentTransactions({
         <EditSheet
           tx={editing}
           categories={categories}
+          trendContext={trendContext}
           onClose={() => setEditing(null)}
           onUpdate={onUpdate}
           onDelete={onDelete}
@@ -95,12 +105,14 @@ export function RecentTransactions({
 function EditSheet({
   tx,
   categories,
+  trendContext,
   onClose,
   onUpdate,
   onDelete,
 }: {
   tx: Transaction
   categories: Category[]
+  trendContext: string
   onClose: () => void
   onUpdate: (id: string, patch: TxPatch) => void
   onDelete: (id: string) => void
@@ -135,8 +147,9 @@ function EditSheet({
           name: note.trim() || titleCase(categoryName),
           category: titleCase(categoryName),
           amount: Number.isFinite(amountValue) && amountValue > 0 ? amountValue : tx.amount,
-          cadence: 'once',
+          cadence: RECURRING_HINT.test(`${note} ${categoryName}`) ? 'monthly' : 'once',
         },
+        ...(trendContext ? { context: trendContext } : {}),
       })
       setIdeas(result)
       setSavingsState('done')

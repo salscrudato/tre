@@ -1,17 +1,19 @@
 import { deleteField, orderBy } from 'firebase/firestore'
-import type { FixedExpense } from '../types'
+import type { BillLever, FixedExpense } from '../types'
 import { createInCol, listCol, removeFromCol, updateInCol } from './firestore'
 
 const NAME = 'fixedExpenses'
 
 // Optional fields that clear when blank. Firestore rejects undefined, so on create we
 // omit them and on update we delete them, so a bill row never carries an empty string,
-// a null goal, or a stale end date.
-const CLEARABLE = ['alternativeAmount', 'endDate', 'goalId', 'note'] as const
+// a null goal, or a stale end date. Clearing `lever` returns the bill to its auto-derived
+// classification (see src/lib/recurring.ts), which is a real, supported state.
+const CLEARABLE = ['lever', 'alternativeAmount', 'endDate', 'goalId', 'note'] as const
 const isBlank = (value: unknown) => value == null || value === ''
 
 // Writes accept null (or blank) for any clearable field to mean "remove it".
 type Clearable = {
+  lever?: BillLever | null
   alternativeAmount?: number | null
   endDate?: string | null
   goalId?: string | null

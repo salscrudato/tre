@@ -1,31 +1,44 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { NavLink } from 'react-router-dom'
 import { cn } from '../lib/cn'
 import { Logo } from './Logo'
-import { CloseIcon, DashboardIcon, HomeIcon, HouseKeyIcon, SettingsIcon } from './icons/nav'
-import type { ComponentType } from 'react'
+import { NavList } from './NavList'
+import { CloseIcon } from './icons/nav'
+import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion'
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-type Dest = { to: string; label: string; Icon: ComponentType<{ size?: number }>; end?: boolean }
-
-// The four destinations, in daily-use order. Settings sits last as configuration.
-const DESTINATIONS: Dest[] = [
-  { to: '/', label: 'Home', Icon: HomeIcon, end: true },
-  { to: '/spending', label: 'Spending', Icon: DashboardIcon },
-  { to: '/house', label: 'House', Icon: HouseKeyIcon },
-  { to: '/settings', label: 'Settings', Icon: SettingsIcon },
-]
+// Mirrors the --dur-fast token in index.css: the fast beat the exit plays for.
+const EXIT_MS = 180
 
 // A left slide-over drawer holding the primary navigation. Opened by the header
 // hamburger; closes on selecting a destination, tapping the backdrop, or Escape. Focus
 // is trapped while open and restored on close, and the body scroll is locked, matching
-// the Sheet. The active item reads in green; the focus ring shows only on keyboard focus
-// (focus-visible), never as a persistent box after a tap.
+// the Sheet. On close the panel stays mounted for one fast beat so the reverse slide
+// can play; reduced motion unmounts instantly. The active item reads in green; the
+// focus ring shows only on keyboard focus (focus-visible), never as a persistent box
+// after a tap.
 export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const panelRef = useRef<HTMLDivElement>(null)
+  const reducedMotion = usePrefersReducedMotion()
+  const [closing, setClosing] = useState(false)
+  const [prevOpen, setPrevOpen] = useState(open)
+
+  // Render-phase adjustment (React's documented pattern for deriving state from a prop
+  // change): entering the closing state before the close render commits keeps the same
+  // DOM nodes mounted, so the exit transition plays on them instead of a fresh tree
+  // that mounts already in its final exit position.
+  if (open !== prevOpen) {
+    setPrevOpen(open)
+    setClosing(!open && !reducedMotion && prevOpen)
+  }
+
+  useEffect(() => {
+    if (!closing) return
+    const id = window.setTimeout(() => setClosing(false), EXIT_MS)
+    return () => window.clearTimeout(id)
+  }, [closing])
 
   useEffect(() => {
     if (!open) return
@@ -66,23 +79,34 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
     }
   }, [open, onClose])
 
-  if (!open) return null
+  if (!open && !closing) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Menu">
+    <div
+      className={cn('fixed inset-0 z-50', closing && 'pointer-events-none')}
+      role="dialog"
+      aria-modal="true"
+      aria-hidden={closing || undefined}
+      aria-label="Menu"
+    >
       <button
         type="button"
         aria-label="Close menu"
         tabIndex={-1}
         onClick={onClose}
-        className="absolute inset-0 bg-black/35 motion-safe:animate-[fade-in_var(--dur-fast)_ease-out]"
+        className={cn(
+          'absolute inset-0 bg-black/35',
+          'motion-safe:transition-opacity motion-safe:duration-[var(--dur-fast)]',
+          closing ? 'opacity-0' : 'motion-safe:animate-[fade-in_var(--dur-fast)_ease-out]',
+        )}
       />
       <div
         ref={panelRef}
         tabIndex={-1}
         className={cn(
           'absolute inset-y-0 left-0 flex w-[82%] max-w-[300px] flex-col bg-surface shadow-lg outline-none',
-          'motion-safe:animate-[drawer-in_var(--dur)_var(--ease-spring)]',
+          'motion-safe:transition-transform motion-safe:duration-[var(--dur-fast)] motion-safe:ease-in',
+          closing ? '-translate-x-full' : 'motion-safe:animate-[drawer-in_var(--dur)_var(--ease-spring)]',
         )}
         style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
@@ -98,28 +122,9 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
           </button>
         </div>
 
-        <nav aria-label="Primary" className="flex flex-col gap-1 px-3 py-2">
-          {DESTINATIONS.map(({ to, label, Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              onClick={onClose}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-3 text-h3 transition',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
-                  isActive
-                    ? 'bg-[color-mix(in_srgb,var(--color-accent)_12%,transparent)] font-semibold text-accent-strong'
-                    : 'text-ink-2 hover:bg-surface-2',
-                )
-              }
-            >
-              <Icon size={22} />
-              {label}
-            </NavLink>
-          ))}
-        </nav>
+        <div className="px-3 py-2">
+          <NavList onNavigate={onClose} />
+        </div>
       </div>
     </div>,
     document.body,

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { HomeIcon, PlusIcon } from '../icons/nav'
 import {
   useAccounts,
@@ -7,6 +8,7 @@ import {
   houseSavingsFromAccounts,
   houseSavingsInvestedFromAccounts,
 } from '../../hooks/useAccounts'
+import { unlinkAccountFromPlaid } from '../../services/accounts'
 import { formatCurrency, titleCase } from '../../lib/format'
 import { Card } from '../Card'
 import { Button } from '../Button'
@@ -31,6 +33,7 @@ const TYPE_LABEL: Record<AccountType, string> = { cash: 'Cash', taxable: 'Invest
 // House goal progress reads, so this is where the couple controls that number.
 export function AccountsSection() {
   const { accounts, isLoading, isError, create, update, remove } = useAccounts()
+  const qc = useQueryClient()
   const [sheet, setSheet] = useState<SheetState>(null)
   const houseTotal = houseSavingsFromAccounts(accounts)
   const houseCash = houseSavingsCashFromAccounts(accounts)
@@ -67,6 +70,11 @@ export function AccountsSection() {
                   <span className="min-w-0">
                     <span className="flex items-center gap-1.5 truncate text-callout text-ink">
                       {titleCase(account.name)}
+                      {account.plaidAccountId && (
+                        <span className="inline-flex items-center rounded-pill bg-[color-mix(in_srgb,var(--color-accent)_14%,transparent)] px-1.5 py-0.5 text-caption font-medium text-accent-strong">
+                          Betterment
+                        </span>
+                      )}
                       {account.countsTowardHouse && (
                         <span className="inline-flex items-center gap-1 rounded-pill bg-[color-mix(in_srgb,var(--color-accent)_14%,transparent)] px-1.5 py-0.5 text-caption font-medium text-accent-strong">
                           <HomeIcon size={11} strokeWidth={2.25} aria-hidden="true" />
@@ -122,6 +130,18 @@ export function AccountsSection() {
                 }
               : undefined
           }
+          onStopSync={
+            sheet.mode === 'edit' && sheet.account.plaidAccountId
+              ? () => {
+                  unlinkAccountFromPlaid(sheet.account.id)
+                    .then(() => qc.invalidateQueries({ queryKey: ['accounts'] }))
+                    .catch(() => {
+                      // The link stays; the next open shows it still synced.
+                    })
+                  setSheet(null)
+                }
+              : undefined
+          }
         />
       )}
     </Card>
@@ -148,11 +168,15 @@ function AccountSheet({
   onClose,
   onSubmit,
   onDelete,
+  onStopSync,
 }: {
   account?: Account
   onClose: () => void
   onSubmit: (data: AccountFormData) => void
   onDelete?: () => void
+  // Present only for an account linked to Betterment: removes the Plaid link so the
+  // daily sync stops replacing this balance.
+  onStopSync?: () => void
 }) {
   const [name, setName] = useState(account?.name ?? '')
   const [type, setType] = useState<AccountType>(account?.type ?? 'cash')
@@ -221,7 +245,19 @@ function AccountSheet({
           placeholder="0.00"
           value={balance}
           onChange={(event) => setBalance(event.target.value.replace(/[^0-9.]/g, ''))}
+          hint={
+            account?.plaidAccountId
+              ? 'This balance syncs from Betterment and will be replaced at the next sync'
+              : undefined
+          }
         />
+        {account?.plaidAccountId && onStopSync && (
+          <div>
+            <Button variant="secondary" onClick={onStopSync}>
+              Stop syncing this account
+            </Button>
+          </div>
+        )}
         <div className="flex flex-col gap-1.5">
           <span className="text-caption text-ink-2">Type</span>
           <Segmented value={type} onChange={setType} options={TYPE_OPTIONS} ariaLabel="Account type" />

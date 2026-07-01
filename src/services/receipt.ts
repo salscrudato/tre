@@ -28,10 +28,14 @@ export interface AnalyzedReceipt {
   error?: string
 }
 
+// The vision functions run up to 90 seconds server-side; the SDK's default callable
+// timeout is 70 seconds, so give every call a comfortable margin.
+const CALL_OPTIONS = { timeout: 120_000 }
+
 const callScanReceipt = httpsCallable<
   { imageBase64: string; mediaType: ReceiptMediaType; provider: ReceiptProvider; categories: string[] },
   ScanReceiptResult
->(functions, 'scanReceipt')
+>(functions, 'scanReceipt', CALL_OPTIONS)
 
 export async function scanReceipt(input: {
   imageBase64: string
@@ -46,7 +50,7 @@ export async function scanReceipt(input: {
 const callAnalyzeReceipt = httpsCallable<
   { imageBase64: string; mediaType: ReceiptMediaType; categories: string[]; context?: string },
   AnalyzedReceipt
->(functions, 'analyzeReceipt')
+>(functions, 'analyzeReceipt', CALL_OPTIONS)
 
 // Read a receipt with Grok vision: the total, the line items, and trend-aware ways to
 // spend less on things like these. Throws on a transport error so the caller can retry.

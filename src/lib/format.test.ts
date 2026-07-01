@@ -50,4 +50,11 @@ describe('titleCase', () => {
     expect(titleCase('iCloud+')).toBe('iCloud+')
     expect(titleCase('PSEG')).toBe('PSEG')
   })
+  it('returns an empty string for a missing name instead of throwing', () => {
+    // A Firestore doc can be missing an optional field, so titleCase must never crash on
+    // undefined or null (this guards every name label across the app).
+    expect(titleCase(undefined)).toBe('')
+    expect(titleCase(null)).toBe('')
+    expect(titleCase('')).toBe('')
+  })
 })

@@ -19,9 +19,10 @@ const Optimize = lazy(() => import('./routes/Optimize'))
 const Settings = lazy(() => import('./routes/Settings'))
 
 // Routes. Primary navigation lives in the header hamburger drawer (Home, Spending,
-// House, Settings). Logging happens via the floating Log button, which opens the Quick
-// Add in a sheet from any screen. Bills and Optimize are reached from within Spending
-// and House. Legacy paths redirect so a cached PWA link still lands on the right screen.
+// House, Settings). Logging happens via the floating Log button, which opens the
+// Quick Add in a sheet from any screen except Home, whose hero is the Quick Add
+// itself. Bills and Optimize are reached from within Spending and House. Legacy paths
+// redirect so a cached PWA link still lands on the right screen.
 export default function App() {
   return (
     <ThemeProvider>

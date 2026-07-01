@@ -80,6 +80,30 @@ describe('buildBudgetView', () => {
     expect(view.discYearBudget).toBe(19500)
   })
 
+  it('excludes a bill past its end date from committed totals and row bills', () => {
+    const withEnded: FixedExpense[] = [
+      ...fixed,
+      { id: 'fx_lease', name: 'Lease', amount: 350, categoryId: 'cat_housing', dueDay: 3, owner: 'Sal', active: true, endDate: '2026-05-01' },
+    ]
+    const ended = buildBudgetView(categories, withEnded, byCategoryId, monthTx, yearTx, new Date(2026, 6, 10))
+    const housing = ended.fixed.rows.find((r) => r.category.id === 'cat_housing')
+    // Only rent counts: the lease ended in May and never appears in the due-day list.
+    expect(housing?.committedMonthly).toBe(4050)
+    expect(housing?.bills.map((b) => b.id)).toEqual(['fx_rent'])
+    expect(ended.committedFixedMonthly).toBe(4250)
+  })
+
+  it('still counts a bill whose end date is ahead', () => {
+    const withFutureEnd: FixedExpense[] = [
+      ...fixed,
+      { id: 'fx_lease', name: 'Lease', amount: 350, categoryId: 'cat_housing', dueDay: 3, owner: 'Sal', active: true, endDate: '2026-12-01' },
+    ]
+    const live = buildBudgetView(categories, withFutureEnd, byCategoryId, monthTx, yearTx, new Date(2026, 6, 10))
+    const housing = live.fixed.rows.find((r) => r.category.id === 'cat_housing')
+    expect(housing?.committedMonthly).toBe(4400)
+    expect(housing?.bills.map((b) => b.id)).toEqual(['fx_rent', 'fx_lease'])
+  })
+
   it('handles a zero-budget category without dividing by zero', () => {
     const noBudget = buildBudgetView(
       [cat('cat_x', 'X', 'variable')],
@@ -121,5 +145,17 @@ describe('savingsRateMonthly', () => {
 
   it('is zero when income is zero', () => {
     expect(savingsRateMonthly(0, fixed, categories, monthTx)).toBe(0)
+  })
+
+  it('excludes a bill past its end date from the committed costs', () => {
+    const today = new Date(2026, 6, 10)
+    const withEnded: FixedExpense[] = [
+      ...fixed,
+      { id: 'fx_lease', name: 'Lease', amount: 350, categoryId: 'cat_housing', dueDay: 3, owner: 'Sal', active: true, endDate: '2026-05-01' },
+    ]
+    expect(savingsRateMonthly(10000, withEnded, categories, monthTx, today)).toBeCloseTo(
+      savingsRateMonthly(10000, fixed, categories, monthTx, today),
+      6,
+    )
   })
 })

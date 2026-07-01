@@ -11,7 +11,7 @@ export function Card({ title, action, padded = true, className, children, ...res
   const hasHeader = title != null || action != null
   return (
     <section
-      className={cn('rounded-xl bg-surface shadow-sm', padded && 'p-5 sm:p-6', className)}
+      className={cn('card-surface rounded-xl bg-surface shadow-sm', padded && 'p-5 sm:p-6', className)}
       {...rest}
     >
       {hasHeader && (

@@ -14,7 +14,9 @@ export type CategoryChipProps = {
 
 // A pill showing a category icon and name. Fill is the category color at 12
 // percent. Selected lifts the fill, adds a 1.5px ring in the category color, and
-// shows a check, so selection is never signalled by color alone.
+// shows a check, so selection is never signalled by color alone. The label text mixes
+// the category hue toward ink so every palette hue clears contrast on the light tint
+// (ink flips in dark mode, so the mix adapts); the icon keeps the full hue for identity.
 export function CategoryChip({
   name,
   color,
@@ -40,11 +42,13 @@ export function CategoryChip({
         backgroundColor: selected
           ? `color-mix(in srgb, ${color} 20%, transparent)`
           : `color-mix(in srgb, ${color} 12%, transparent)`,
-        color,
+        color: `color-mix(in srgb, ${color} 55%, var(--color-ink))`,
         boxShadow: selected ? `inset 0 0 0 1.5px ${color}` : undefined,
       }}
     >
-      <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
+      <span className="inline-flex shrink-0" style={{ color }} aria-hidden="true">
+        <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
+      </span>
       <span>{titleCase(name)}</span>
       {selected && <CheckIcon size={16} strokeWidth={2.5} aria-hidden="true" />}
     </button>

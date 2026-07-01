@@ -237,6 +237,16 @@ describe('monthsUntil and horizonIsValid', () => {
     expect(horizonIsValid('2026-06-29', today)).toBe(false)
     expect(horizonIsValid('2020-01-01', today)).toBe(false)
   })
+
+  it('never returns NaN for a malformed or empty date (a corrupt settings value)', () => {
+    // A bad date must resolve to a finite zero horizon so no projection renders NaN.
+    expect(yearsUntil('', today)).toBe(0)
+    expect(yearsUntil('bogus', today)).toBe(0)
+    expect(monthsUntil('', today)).toBe(0)
+    expect(monthsUntil('not-a-date', today)).toBe(0)
+    expect(horizonIsValid('', today)).toBe(false)
+    expect(horizonIsValid('bogus', today)).toBe(false)
+  })
 })
 
 describe('houseImpactOfMonthly', () => {

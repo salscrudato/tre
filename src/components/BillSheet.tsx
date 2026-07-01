@@ -114,7 +114,8 @@ export function BillSheet({
   const altValid = altSet ? Number.isFinite(altValue) && altValue >= 0 && altValue < amountValue : true
   const altNumber = altSet && altValid ? clampToCents(altValue) : null
 
-  // A draft bill mirroring the current form, so the preview reflects unsaved edits.
+  // A draft bill mirroring the current form, so the preview reflects unsaved edits:
+  // switching the goal radio or setting an end month updates the home impact live.
   const draft: FixedExpense = {
     id: bill?.id ?? 'draft',
     name: name.trim() || 'This bill',
@@ -123,7 +124,8 @@ export function BillSheet({
     dueDay: dayValid ? dayValue : 1,
     owner: bill?.owner ?? 'Sal',
     active: true,
-    goalId: bill?.goalId,
+    endDate: endMonth ? `${endMonth}-01` : undefined,
+    goalId: lever === 'savings' ? goalId || undefined : undefined,
     lever,
     alternativeAmount: altNumber ?? undefined,
   }
@@ -172,6 +174,7 @@ export function BillSheet({
           label="Name"
           placeholder="Rent"
           autoCapitalize="words"
+          autoFocus={!bill}
           value={name}
           onChange={(event) => setName(event.target.value)}
         />

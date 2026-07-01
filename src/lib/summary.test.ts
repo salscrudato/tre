@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  billActiveOn,
   incomeInEffect,
   monthlyIncomeByOwnerAt,
   monthlyNetIncome,
@@ -55,6 +56,35 @@ describe('monthlyNetIncomeAt and monthlyIncomeByOwnerAt', () => {
 
   it('the fully ramped total ignores timing', () => {
     expect(monthlyNetIncome(incomes)).toBe(17200)
+  })
+})
+
+describe('billActiveOn', () => {
+  it('is always true with no end date', () => {
+    expect(billActiveOn({}, new Date(2026, 6, 1))).toBe(true)
+    expect(billActiveOn({ endDate: undefined }, new Date(2030, 0, 1))).toBe(true)
+  })
+
+  it('is true through the whole end month and false after it', () => {
+    // The pickers store the first of the chosen month, so "ends September" must stay
+    // active through September 30, not just September 1.
+    const bill = { endDate: '2026-09-01' }
+    expect(billActiveOn(bill, new Date(2026, 7, 31))).toBe(true) // August 31
+    expect(billActiveOn(bill, new Date(2026, 8, 1))).toBe(true) // first of the end month
+    expect(billActiveOn(bill, new Date(2026, 8, 2))).toBe(true) // mid end month
+    expect(billActiveOn(bill, new Date(2026, 8, 30))).toBe(true) // last day of the end month
+    expect(billActiveOn(bill, new Date(2026, 9, 1))).toBe(false) // the month after
+    expect(billActiveOn(bill, new Date(2027, 0, 1))).toBe(false)
+  })
+
+  it('reads a month-only end date the same month-granular way', () => {
+    expect(billActiveOn({ endDate: '2026-09' }, new Date(2026, 8, 1))).toBe(true)
+    expect(billActiveOn({ endDate: '2026-09' }, new Date(2026, 8, 30))).toBe(true)
+    expect(billActiveOn({ endDate: '2026-09' }, new Date(2026, 9, 1))).toBe(false)
+  })
+
+  it('treats an unparseable end date as ongoing', () => {
+    expect(billActiveOn({ endDate: 'soon' }, new Date(2026, 8, 2))).toBe(true)
   })
 })
 

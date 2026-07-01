@@ -1,7 +1,7 @@
 import { getDocs, orderBy, query, where, writeBatch } from 'firebase/firestore'
 import { db } from '../config/firebase'
 import type { Category } from '../types'
-import { colRef, createInCol, docRef, listCol, removeFromCol, updateInCol } from './firestore'
+import { colRef, createInCol, docRef, listCol, updateInCol } from './firestore'
 
 const NAME = 'categories'
 
@@ -9,7 +9,6 @@ export const listCategories = () => listCol<Category>(NAME, orderBy('order', 'as
 export const createCategory = (data: Omit<Category, 'id'>) => createInCol<Category>(NAME, data)
 export const updateCategory = (id: string, patch: Partial<Omit<Category, 'id'>>) =>
   updateInCol<Category>(NAME, id, patch)
-export const deleteCategory = (id: string) => removeFromCol(NAME, id)
 
 // Persist a new ordering by writing each category's index as its order field.
 export async function saveCategoryOrder(orderedIds: string[]): Promise<void> {

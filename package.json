@@ -1,5 +1,5 @@
 {
-  "name": "nest",
+  "name": "tre",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -11,10 +11,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "emulators": "firebase emulators:start --only auth,firestore --import=./emulator-data --export-on-exit=./emulator-data",
-    "seed": "tsx scripts/seed.ts",
-    "seed:emulator": "firebase emulators:exec --only auth,firestore --export-on-exit=./emulator-data \"npm run seed\"",
-    "finalize": "tsx scripts/finalize.ts",
-    "correct-betterment": "tsx scripts/correct-betterment.ts"
+    "migrate": "tsx scripts/migrate-2026-07.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
@@ -23,11 +20,13 @@
     "firebase": "^11.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-plaid-link": "^4.1.1",
     "react-router-dom": "^6.28.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
     "@tailwindcss/vite": "^4.0.0",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",
@@ -36,6 +35,7 @@
     "eslint-plugin-react-refresh": "^0.4.16",
     "firebase-admin": "^12.7.0",
     "globals": "^15.14.0",
+    "jsdom": "^25.0.1",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.22.4",
     "typescript": "^5.7.2",

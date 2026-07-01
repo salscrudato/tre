@@ -15,13 +15,15 @@ import { WealthProjection } from '../components/WealthProjection'
 // afford, where the monthly payment and extra savings are live dials. A quiet link to
 // ways to save closes it out. None of this appears on Home, so Home stays calm.
 export default function House() {
-  const { settings, today, plan, house } = useHouseModel()
+  const { settings, today, plan, house, isLoading } = useHouseModel()
   const { update: updateSettings } = useSettings()
 
   const discBudget = plan?.discretionaryBudgetMonthly ?? 0
   const maxExtraSavings = useMemo(() => Math.max(500, Math.ceil(discBudget / 100) * 100), [discBudget])
 
-  if (!settings) {
+  // Hold the spinner until every read has settled, so the "set your house goal" empty
+  // state never flashes while the goals are still streaming in.
+  if (isLoading || !settings) {
     return (
       <div role="status" className="flex items-center justify-center gap-2 py-16 text-muted">
         <Spinner size={18} />

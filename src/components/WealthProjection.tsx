@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { futureValueOneTime, futureValueRecurring } from '../lib/money'
 import { useCountUp } from '../hooks/useCountUp'
 import { compactScale, formatCompactScaled, formatCurrency } from '../lib/format'
@@ -25,7 +25,14 @@ export type WealthProjectionProps = {
 // and 30 years, shown in the wealth color so it reads as a separate, growing bucket.
 // Calm and honest, a direction not a promise.
 export function WealthProjection({ monthly, annualReturn, seed = 0, className }: WealthProjectionProps) {
-  const [amount, setAmount] = useState(Math.round(Math.max(0, monthly) / STEP) * STEP)
+  const seeded = Math.round(Math.max(0, monthly) / STEP) * STEP
+  const [amount, setAmount] = useState(seeded)
+  const [touched, setTouched] = useState(false)
+  // On a cold load the plan lands after the first render, so keep adopting the loaded
+  // surplus until the couple moves the dial themselves (the HousePower re-seed pattern).
+  useEffect(() => {
+    if (!touched) setAmount(seeded)
+  }, [seeded, touched])
   const sliderMax = Math.max(2500, Math.ceil((Math.max(monthly, amount) * 1.5) / STEP) * STEP)
 
   const figures = useMemo(
@@ -60,7 +67,10 @@ export function WealthProjection({ monthly, annualReturn, seed = 0, className }:
           step={STEP}
           value={amount}
           aria-valuetext={`${formatCurrency(amount, { cents: false })} per month`}
-          onChange={(event) => setAmount(Number(event.target.value))}
+          onChange={(event) => {
+            setTouched(true)
+            setAmount(Number(event.target.value))
+          }}
           className="range-wealth w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-wealth focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
         />
       </div>

@@ -1,7 +1,7 @@
 // Small pure helpers for the Home glance: date windows, monthly income, and the
 // member label. Finance formulas live in lib/money.ts; these are aggregations.
 
-import type { CategoryType, Income, MemberName } from '../types'
+import type { CategoryType, FixedExpense, Income, MemberName } from '../types'
 
 // The household speaks of discretionary spend, not "variable". The stored type
 // value stays the same; only the label the couple sees changes.
@@ -39,11 +39,6 @@ export function monthBounds(today: Date = new Date()): { start: string; end: str
 // Year to date: January 1 through today.
 export function yearBounds(today: Date = new Date()): { start: string; end: string } {
   return { start: isoDate(new Date(today.getFullYear(), 0, 1)), end: isoDate(today) }
-}
-
-// Number of months elapsed this year including the current one (January is 1).
-export function monthsElapsedThisYear(today: Date = new Date()): number {
-  return today.getMonth() + 1
 }
 
 // The monthly equivalent of a single income line, from its paycheck and frequency.
@@ -116,6 +111,20 @@ export function nextIncomeStart(incomes: Income[], date: Date): Date | null {
 
 export function sumAmounts(items: Array<{ amount: number }>): number {
   return items.reduce((sum, item) => sum + item.amount, 0)
+}
+
+// True when a bill is still running on the given date: no end date means ongoing, and
+// a bill stays active through its entire END MONTH. The end is month-granular because
+// every writer is: the bill sheet and the settings grid both offer a month picker and
+// store the first of that month, so comparing by day would silently drop a bill for
+// essentially all of its final month. Compared as local year-month strings, matching
+// isoDate above, so a timezone offset never ends a bill a month early or late. An
+// unparseable end is treated as ongoing.
+export function billActiveOn(bill: Pick<FixedExpense, 'endDate'>, date: Date): boolean {
+  if (!bill.endDate) return true
+  const match = /^(\d{4})-(\d{2})/.exec(bill.endDate)
+  if (!match) return true
+  return isoDate(date).slice(0, 7) <= `${match[1]}-${match[2]}`
 }
 
 // The owner field is informational only (the app is shared). Best-effort label

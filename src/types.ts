@@ -4,9 +4,6 @@
 // app works with. No any.
 
 import type { Timestamp } from 'firebase/firestore'
-import type { ReceiptScanProvider } from './config/app'
-
-export type { ReceiptScanProvider }
 
 export type MemberName = 'Sal' | 'Lisa'
 export type CategoryType = 'fixed' | 'variable' | 'savings'
@@ -48,7 +45,6 @@ export interface HouseholdSettings {
   // default: the plan is the down payment goal, not a home price. The couple can turn
   // this on and set it in Settings when they want the affordability marker.
   targetHomePrice?: number
-  receiptScanProvider: ReceiptScanProvider
 }
 
 export interface Household {

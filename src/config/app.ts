@@ -10,22 +10,20 @@ export const APP_NAME = 'Tre'
 // The fixed household id. The seed creates this document and the app reads it.
 export const HOUSEHOLD_ID = 'primary'
 
-export type ReceiptScanProvider = 'off' | 'anthropic' | 'grok'
-
 // A complete settings fallback (keys match HouseholdSettings exactly), so any
 // projection is robust if a setting is ever absent.
 export const DEFAULTS = {
   currency: 'USD',
   assumedAnnualReturn: 0.07,
   compoundingPerYear: 12,
-  housePurchaseTargetDate: '2027-09-01',
+  housePurchaseTargetDate: '2028-01-31',
   targetPitiMin: 5000,
   // The band's upper bound stays at or above the single target below, so the primary
   // target never sits outside its own advanced min/max band.
   targetPitiMax: 7000,
   // The single house affordability target: the monthly PITI the couple is solving
   // their max home price against. Drives the house meter and runway everywhere.
-  targetPiti: 6500,
+  targetPiti: 6000,
   mortgageRateAssumption: 0.065,
   loanTermYears: 30,
   propertyTaxRateAssumption: 0.023,
@@ -35,7 +33,6 @@ export const DEFAULTS = {
   discretionaryMonthlyBudget: 2500,
   // targetHomePrice is intentionally absent: the plan is the down payment goal, not a
   // home price. It is an optional setting the couple can turn on themselves.
-  receiptScanProvider: 'off',
 } as const satisfies {
   currency: string
   assumedAnnualReturn: number
@@ -52,5 +49,4 @@ export const DEFAULTS = {
   downPaymentReturnAssumption: number
   discretionaryMonthlyBudget: number
   targetHomePrice?: number
-  receiptScanProvider: ReceiptScanProvider
 }
