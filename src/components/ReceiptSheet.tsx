@@ -2,68 +2,119 @@ import { useEffect, useRef, useState } from 'react'
 import { Sheet } from './Sheet'
 import { Button } from './Button'
 import { Spinner } from './Spinner'
-import { CategoryChip } from './CategoryChip'
-import { SparkleIcon } from './icons/ui'
+import { Money } from './Money'
 import { ScanIcon } from './icons/Scan'
-import { analyzeReceipt, type AnalyzedReceipt } from '../services/receipt'
+import { extractExpenses, type CaptureItem, type CaptureSuccess } from '../services/capture'
 import { formatCurrency, formatDate, titleCase } from '../lib/format'
 import { imageFileToBase64 } from '../lib/image'
-import { todayISO } from '../lib/summary'
+import { homeCategoryOrder, todayISO } from '../lib/summary'
 import type { QuickAddInput } from './QuickAdd'
 import type { Category } from '../types'
 
-type Phase = 'pick' | 'analyzing' | 'review' | 'error'
+type Phase = 'pick' | 'reading' | 'review' | 'error'
 
 const SUPPORTED = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
-// The purchase date printed on the receipt, when it is a real calendar date and not in
-// the future; otherwise today. Guards a misread date from landing the expense in the
-// wrong month or ahead of now. ISO strings compare correctly as strings.
-function receiptDate(analyzed: AnalyzedReceipt): string {
-  const raw = analyzed.date?.trim() ?? ''
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw)
+// The reading wait, narrated in stages (like the planner), so it never feels frozen.
+const READING_STAGES = ['Reading the printed amounts', 'Sorting the line items', 'Matching categories']
+
+function ReadingProgress() {
+  const [stage, setStage] = useState(0)
+  useEffect(() => {
+    const id = window.setInterval(() => setStage((current) => (current + 1) % READING_STAGES.length), 3500)
+    return () => window.clearInterval(id)
+  }, [])
+  return <span className="text-callout text-muted">{READING_STAGES[stage]}</span>
+}
+
+// A reviewed line, ready to log: the extracted item plus the category it will land in
+// and whether it is still included.
+interface ReviewItem {
+  item: CaptureItem
+  categoryId: string
+  included: boolean
+}
+
+// A printed date is used only when it is a real calendar date not in the future;
+// otherwise today. Guards a misread date from landing an expense in the wrong month.
+// ISO strings compare correctly as strings.
+function safeDate(raw: string | null | undefined): string {
+  const value = raw?.trim() ?? ''
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
   if (!match) return todayISO()
   const [, y, m, d] = match
   const parsed = new Date(Number(y), Number(m) - 1, Number(d))
   const real =
     parsed.getFullYear() === Number(y) && parsed.getMonth() === Number(m) - 1 && parsed.getDate() === Number(d)
-  return real && raw <= todayISO() ? raw : todayISO()
+  return real && value <= todayISO() ? value : todayISO()
 }
 
-// Scan a receipt for savings: read the photo with Grok vision, show the total, the line
-// items, and trend-aware ways to spend less on things like these. Logging the total is
-// one tap; the savings advice is the point. It never auto-logs.
+// Capture a receipt or statement: photograph it, review the extracted expense lines
+// (amounts copied from the paper, never computed), adjust categories, and log the
+// selected lines in one tap. Nothing is ever logged without review.
 export function ReceiptSheet({
   open,
   onClose,
   categories,
-  trendContext,
   onLog,
 }: {
   open: boolean
   onClose: () => void
   categories: Category[]
-  trendContext?: string
   onLog: (input: QuickAddInput) => Promise<void>
 }) {
   const [phase, setPhase] = useState<Phase>('pick')
-  const [analyzed, setAnalyzed] = useState<AnalyzedReceipt | null>(null)
-  const [categoryId, setCategoryId] = useState<string>('')
+  const [capture, setCapture] = useState<CaptureSuccess | null>(null)
+  const [rows, setRows] = useState<ReviewItem[]>([])
   const [errorText, setErrorText] = useState('')
   const [logging, setLogging] = useState(false)
-  const [logged, setLogged] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
+  const [loggedCount, setLoggedCount] = useState<number | null>(null)
+  // Two ways in: the camera directly, or the photo library and files (screenshots,
+  // saved statement images). Both feed the same extraction.
+  const cameraRef = useRef<HTMLInputElement>(null)
+  const uploadRef = useRef<HTMLInputElement>(null)
+  // Guards a slow extraction landing after the sheet was closed or a new photo taken.
+  const requestRef = useRef(0)
+  const closeTimerRef = useRef<number | null>(null)
+
+  // Every category is loggable, everyday and savings first, then bills, matching the
+  // Home tiles, so a receipt can map to any of them.
+  const loggable = homeCategoryOrder(categories)
 
   // Reset the flow each time the sheet opens.
   useEffect(() => {
     if (open) {
+      // A new session: invalidate any in-flight extraction from the previous one and
+      // cancel a pending success-close so it cannot close this fresh sheet.
+      requestRef.current += 1
+      if (closeTimerRef.current != null) {
+        window.clearTimeout(closeTimerRef.current)
+        closeTimerRef.current = null
+      }
       setPhase('pick')
-      setAnalyzed(null)
-      setCategoryId('')
+      setCapture(null)
+      setRows([])
       setErrorText('')
-      setLogged(false)
+      setLoggedCount(null)
     }
   }, [open])
+
+  useEffect(
+    () => () => {
+      if (closeTimerRef.current != null) window.clearTimeout(closeTimerRef.current)
+    },
+    [],
+  )
+
+  function categoryIdFor(name: string): string {
+    const lower = name.trim().toLowerCase()
+    return (
+      loggable.find((c) => c.name.toLowerCase() === lower)?.id ??
+      loggable.find((c) => c.name.toLowerCase() === 'other')?.id ??
+      loggable[0]?.id ??
+      ''
+    )
+  }
 
   async function handleFile(file: File) {
     if (!SUPPORTED.has(file.type)) {
@@ -71,53 +122,63 @@ export function ReceiptSheet({
       setPhase('error')
       return
     }
-    setPhase('analyzing')
+    const request = ++requestRef.current
+    setPhase('reading')
     setErrorText('')
     try {
       // Downscale on-device before upload, so a 6 MB phone photo becomes a fast few
       // hundred KB without losing readability.
       const { base64, mediaType } = await imageFileToBase64(file)
-      const result = await analyzeReceipt({
-        imageBase64: base64,
-        mediaType,
-        categories: categories.map((c) => c.name),
-        context: trendContext,
-      })
-      if (result.error) {
-        setErrorText(result.error)
+      const result = await extractExpenses(base64, mediaType, loggable.map((c) => c.name))
+      if (request !== requestRef.current) return
+      if (!result.ok) {
+        setErrorText(result.message)
         setPhase('error')
         return
       }
-      setAnalyzed(result)
-      const matched =
-        categories.find((c) => c.name.toLowerCase() === (result.suggestedCategory ?? '').toLowerCase()) ??
-        categories.find((c) => c.name.toLowerCase() === 'groceries') ??
-        categories.find((c) => c.name.toLowerCase() === 'other')
-      setCategoryId(matched?.id ?? categories[0]?.id ?? '')
+      setCapture(result)
+      setRows(result.items.map((item) => ({ item, categoryId: categoryIdFor(item.category), included: true })))
       setPhase('review')
     } catch {
-      setErrorText('Could not read that receipt. Try a clearer photo.')
+      if (request !== requestRef.current) return
+      setErrorText('Could not read that photo. Try a clearer one.')
       setPhase('error')
     }
   }
 
   async function handleLog() {
-    if (!analyzed || analyzed.total == null || !categoryId) return
+    if (!capture) return
+    const selected = rows.filter((row) => row.included && row.categoryId)
+    if (selected.length === 0) return
     setLogging(true)
+    let done = 0
     try {
-      // Carry the receipt through: the merchant becomes the note, so the trend context
-      // learns what we actually buy, and the printed purchase date is used when valid.
-      const merchant = analyzed.merchant?.trim()
-      await onLog({
-        amount: analyzed.total,
-        categoryId,
-        date: receiptDate(analyzed),
-        ...(merchant ? { note: titleCase(merchant) } : {}),
-      })
-      setLogged(true)
-      window.setTimeout(onClose, 900)
+      for (const row of selected) {
+        const name = row.item.name.trim()
+        await onLog({
+          amount: row.item.amount,
+          categoryId: row.categoryId,
+          // Statements carry a date per line; receipts fall back to the printed
+          // receipt date, then today.
+          date: safeDate(row.item.date ?? capture.date),
+          ...(name ? { note: titleCase(name) } : {}),
+        })
+        done += 1
+      }
+      setLoggedCount(selected.length)
+      closeTimerRef.current = window.setTimeout(onClose, 1100)
     } catch {
-      setErrorText('Could not log that. Try again.')
+      // Honest about partial progress: items before the failure did log, so they are
+      // deselected here and "Back to the items" resumes with only the rest checked.
+      if (done > 0) {
+        const loggedRows = new Set(selected.slice(0, done))
+        setRows((prev) => prev.map((row) => (loggedRows.has(row) ? { ...row, included: false } : row)))
+      }
+      setErrorText(
+        done === 0
+          ? 'Could not log those. Nothing was written; try again.'
+          : `Logged ${done} of ${selected.length} before the connection failed. The rest stay selected; go back to the items to log them.`,
+      )
       setPhase('error')
     } finally {
       setLogging(false)
@@ -126,20 +187,32 @@ export function ReceiptSheet({
 
   if (!open) return null
 
-  const total = analyzed?.total ?? null
-  // What the log button will actually write, shown under the total so confirming is
-  // informed: the merchant (the note) and the purchase date it logs on.
-  const merchantRaw = analyzed?.merchant?.trim() ?? ''
-  const merchantLabel = merchantRaw ? titleCase(merchantRaw) : ''
-  const dateLabel = analyzed ? formatDate(receiptDate(analyzed), 'short') : ''
+  const selected = rows.filter((row) => row.included && row.categoryId)
+  const selectedTotal = selected.reduce((sum, row) => sum + row.item.amount, 0)
+  const headerLabel = capture
+    ? [capture.merchant ? titleCase(capture.merchant) : null, capture.date ? formatDate(safeDate(capture.date), 'short') : null]
+        .filter(Boolean)
+        .join(', ')
+    : ''
 
   return (
     <Sheet open onClose={onClose} title="Scan a receipt">
       <input
-        ref={fileRef}
+        ref={cameraRef}
         type="file"
         accept="image/jpeg,image/png,image/webp"
         capture="environment"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.target.value = ''
+          if (file) void handleFile(file)
+        }}
+      />
+      <input
+        ref={uploadRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
         className="hidden"
         onChange={(event) => {
           const file = event.target.files?.[0]
@@ -154,16 +227,22 @@ export function ReceiptSheet({
             <ScanIcon size={26} />
           </span>
           <p className="max-w-[300px] text-callout text-ink-2">
-            Take a photo of a receipt. We read the items and find cheaper or bulk ways to buy what you buy.
+            Photograph a receipt or statement, or upload a screenshot or saved image. We read the printed amounts into
+            expenses you review and log.
           </p>
-          <Button onClick={() => fileRef.current?.click()}>Take a photo</Button>
+          <div className="flex flex-col gap-2">
+            <Button onClick={() => cameraRef.current?.click()}>Take a photo</Button>
+            <Button variant="secondary" onClick={() => uploadRef.current?.click()}>
+              Upload a photo or screenshot
+            </Button>
+          </div>
         </div>
       )}
 
-      {phase === 'analyzing' && (
+      {phase === 'reading' && (
         <div role="status" className="flex flex-col items-center gap-3 py-10 text-center">
           <Spinner size={24} />
-          <span className="text-callout text-muted">Reading the receipt and finding savings</span>
+          <ReadingProgress />
         </div>
       )}
 
@@ -172,98 +251,105 @@ export function ReceiptSheet({
           <p role="alert" className="max-w-[300px] text-callout text-danger">
             {errorText}
           </p>
-          <Button variant="secondary" onClick={() => fileRef.current?.click()}>
-            Try another photo
-          </Button>
+          <div className="flex gap-3">
+            {capture && (
+              <Button variant="secondary" onClick={() => setPhase('review')}>
+                Back to the items
+              </Button>
+            )}
+            <Button variant="secondary" onClick={() => uploadRef.current?.click()}>
+              Try another image
+            </Button>
+          </div>
         </div>
       )}
 
-      {phase === 'review' && analyzed && (
-        <div className="flex flex-col gap-5">
-          {logged ? (
+      {phase === 'review' && capture && (
+        <div className="flex flex-col gap-4">
+          {loggedCount != null ? (
             <p className="flex items-center justify-center gap-1.5 py-4 text-callout text-positive-strong">
-              Logged. Nice.
+              Logged {loggedCount} {loggedCount === 1 ? 'expense' : 'expenses'}. Nice.
             </p>
           ) : (
             <>
               <div className="flex flex-col items-center gap-0.5">
-                <span className="text-caption text-muted">Receipt total</span>
-                <span className="tnum text-display font-bold text-ink">
-                  {total != null ? formatCurrency(total, { cents: false }) : 'Not found'}
+                <span className="text-caption text-muted">
+                  {capture.kind === 'statement' ? 'Statement' : 'Receipt'}
                 </span>
-                {dateLabel.length > 0 && (
-                  <span className="text-caption text-muted">
-                    {merchantLabel ? `${merchantLabel}, ${dateLabel}` : dateLabel}
-                  </span>
-                )}
+                <span className="tnum text-display font-bold text-ink">
+                  {capture.total != null
+                    ? formatCurrency(capture.total, { cents: capture.total % 1 !== 0 })
+                    : formatCurrency(selectedTotal, { cents: selectedTotal % 1 !== 0 })}
+                </span>
+                {headerLabel.length > 0 && <span className="text-caption text-muted">{headerLabel}</span>}
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <span className="px-1 text-caption text-ink-2">Log as</span>
-                <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-                  {categories.map((category) => (
-                    <CategoryChip
-                      key={category.id}
-                      name={category.name}
-                      color={category.color}
-                      icon={category.icon}
-                      selected={categoryId === category.id}
-                      onSelect={() => setCategoryId(category.id)}
+              {capture.warnings.length > 0 && (
+                <div className="flex flex-col gap-1 rounded-lg bg-surface-2 px-3.5 py-2.5">
+                  {capture.warnings.map((warning, index) => (
+                    <p key={index} className="text-caption text-ink-2">
+                      {warning}
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              <ul className="flex flex-col divide-y divide-line/70">
+                {rows.map((row, index) => (
+                  <li key={index} className="flex items-center gap-3 py-2.5">
+                    <input
+                      id={`capture-row-${index}`}
+                      type="checkbox"
+                      checked={row.included}
+                      onChange={(event) =>
+                        setRows((prev) =>
+                          prev.map((r, i) => (i === index ? { ...r, included: event.target.checked } : r)),
+                        )
+                      }
+                      className="h-5 w-5 shrink-0 accent-accent"
                     />
-                  ))}
-                </div>
-              </div>
-
-              {analyzed.tips.length > 0 && (
-                <div className="flex flex-col gap-2 rounded-lg border border-line bg-surface-2 p-3.5">
-                  <div className="flex items-center gap-1.5 text-accent-strong">
-                    <SparkleIcon size={15} aria-hidden="true" />
-                    <span className="text-caption font-semibold uppercase tracking-wide">Ways to save</span>
-                  </div>
-                  {analyzed.tips.map((tip, index) => (
-                    <div key={index}>
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="text-callout font-medium text-ink">{tip.title}</span>
-                        {tip.estMonthly > 0 && (
-                          <span className="tnum shrink-0 rounded-pill bg-positive/12 px-2 py-0.5 text-caption font-semibold text-positive-strong">
-                            {formatCurrency(tip.estMonthly, { cents: false })}/mo
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-0.5 text-caption leading-relaxed text-ink-2">{tip.detail}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {analyzed.items.length > 0 && (
-                <details className="rounded-lg bg-surface-2 px-3.5 py-2.5">
-                  <summary className="cursor-pointer list-none text-caption font-medium text-accent-strong">
-                    {analyzed.items.length} items
-                  </summary>
-                  <ul className="mt-2 flex flex-col gap-1">
-                    {analyzed.items.map((item, index) => (
-                      <li key={index} className="flex items-center justify-between gap-3 text-caption text-ink-2">
-                        <span className="truncate">{titleCase(item.name)}</span>
-                        <span className="tnum shrink-0">{formatCurrency(item.price)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
+                    <label htmlFor={`capture-row-${index}`} className="min-w-0 flex-1">
+                      <span className="block truncate text-callout text-ink">{titleCase(row.item.name)}</span>
+                      <span className="block text-caption text-muted">
+                        {row.item.confidence === 'low' && 'Check this one. '}
+                        {row.item.date ? formatDate(safeDate(row.item.date), 'short') : null}
+                      </span>
+                    </label>
+                    <select
+                      value={row.categoryId}
+                      aria-label={`Category for ${row.item.name}`}
+                      onChange={(event) =>
+                        setRows((prev) =>
+                          prev.map((r, i) => (i === index ? { ...r, categoryId: event.target.value } : r)),
+                        )
+                      }
+                      className="min-h-11 max-w-[140px] rounded-md border border-line bg-surface px-2 py-1.5 text-body text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    >
+                      {loggable.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {titleCase(category.name)}
+                        </option>
+                      ))}
+                    </select>
+                    <Money amount={row.item.amount} size="sm" className="shrink-0" />
+                  </li>
+                ))}
+              </ul>
 
               <div className="flex gap-3">
-                <Button variant="secondary" onClick={() => fileRef.current?.click()}>
+                <Button variant="secondary" onClick={() => uploadRef.current?.click()}>
                   Retake
                 </Button>
                 <Button
                   fullWidth
-                  disabled={total == null || !categoryId || logging}
+                  disabled={selected.length === 0 || logging}
                   aria-busy={logging}
                   leadingIcon={logging ? <Spinner size={18} /> : undefined}
                   onClick={handleLog}
                 >
-                  {total != null ? `Log ${formatCurrency(total, { cents: false })}` : 'Enter it manually'}
+                  {selected.length === 0
+                    ? 'Nothing selected'
+                    : `Log ${selected.length} for ${formatCurrency(selectedTotal, { cents: selectedTotal % 1 !== 0 })}`}
                 </Button>
               </div>
             </>

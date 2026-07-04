@@ -3,9 +3,10 @@ import { CheckIcon } from '../icons/ui'
 import { PlusIcon } from '../icons/nav'
 import { useGoals } from '../../hooks/useGoals'
 import { useAccounts, houseSavingsFromAccounts } from '../../hooks/useAccounts'
+import { findHouseGoal } from '../../lib/house'
 import { useSettings } from '../../hooks/useSettings'
 import { CATEGORY_PALETTE, swatchInk } from '../../config/palette'
-import { formatCurrency, formatPercent, titleCase } from '../../lib/format'
+import { formatCurrency, formatPercent, groupAmount, parseAmount, titleCase } from '../../lib/format'
 import { Card } from '../Card'
 import { Button } from '../Button'
 import { Field } from '../Field'
@@ -20,8 +21,8 @@ type SheetState = { mode: 'add' } | { mode: 'edit'; goal: Goal } | null
 
 export function GoalsSection() {
   const { goals, isLoading, isError, create, update, remove } = useGoals()
-  const { accounts } = useAccounts()
-  const { settings } = useSettings()
+  const { accounts, isLoading: accountsLoading } = useAccounts()
+  const { settings, update: updateSettings } = useSettings()
   const [sheet, setSheet] = useState<SheetState>(null)
   // Next priority from the existing values, not the count, so it never collides with
   // a surviving goal after a delete. A fresh goal defaults its date to the house
@@ -31,13 +32,15 @@ export function GoalsSection() {
 
   // The House goal balance is the combined flagged accounts, the same single source the
   // Spending tab reads, so the two house numbers never disagree.
-  const houseGoalId = goals.find((g) => g.name.toLowerCase().includes('house'))?.id ?? null
+  const houseGoalId = findHouseGoal(goals)?.id ?? null
   const houseSavings = houseSavingsFromAccounts(accounts)
   const currentFor = (goal: Goal) => (goal.id === houseGoalId ? houseSavings : goal.current)
 
   return (
     <Card title="Goals" action={<AddButton onClick={() => setSheet({ mode: 'add' })} />}>
-      {isLoading ? (
+      {/* Wait for accounts too: the House goal's balance is summed from them, so
+          rendering before they land would flash $0 of the target. */}
+      {isLoading || accountsLoading ? (
         <div role="status" className="flex items-center justify-center gap-2 py-6 text-muted">
           <Spinner size={18} />
           <span className="text-callout">Loading goals</span>
@@ -84,8 +87,20 @@ export function GoalsSection() {
           lockedCurrent={sheet.mode === 'edit' && sheet.goal.id === houseGoalId ? houseSavings : undefined}
           onClose={() => setSheet(null)}
           onSubmit={(data) => {
-            if (sheet.mode === 'edit') update.mutate({ id: sheet.goal.id, patch: data })
-            else create.mutate(data)
+            if (sheet.mode === 'edit') {
+              update.mutate({ id: sheet.goal.id, patch: data })
+              // The House goal's target and date are the same numbers as
+              // settings.downPaymentTarget and the purchase date everywhere in the
+              // app, so editing one keeps the other in step.
+              if (sheet.goal.id === houseGoalId && settings) {
+                const patch: Partial<typeof settings> = {}
+                if (data.target !== settings.downPaymentTarget) patch.downPaymentTarget = data.target
+                if (data.targetDate && data.targetDate !== settings.housePurchaseTargetDate) {
+                  patch.housePurchaseTargetDate = data.targetDate
+                }
+                if (Object.keys(patch).length > 0) updateSettings.mutate(patch)
+              }
+            } else create.mutate(data)
             setSheet(null)
           }}
           onDelete={
@@ -137,15 +152,15 @@ function GoalSheet({
   onDelete?: () => void
 }) {
   const [name, setName] = useState(goal?.name ?? '')
-  const [target, setTarget] = useState(goal ? String(goal.target) : '')
-  const [current, setCurrent] = useState(goal ? String(goal.current) : '')
+  const [target, setTarget] = useState(goal ? groupAmount(String(goal.target)) : '')
+  const [current, setCurrent] = useState(goal ? groupAmount(String(goal.current)) : '')
   const [targetDate, setTargetDate] = useState(goal?.targetDate ?? defaultDate)
   const [color, setColor] = useState(goal?.color ?? CATEGORY_PALETTE[0])
   const [note, setNote] = useState(goal?.note ?? '')
 
   const locked = lockedCurrent != null
-  const targetValue = Number.parseFloat(target)
-  const currentValue = locked ? lockedCurrent : Number.parseFloat(current)
+  const targetValue = parseAmount(target)
+  const currentValue = locked ? lockedCurrent : parseAmount(current)
   const canSave =
     name.trim().length > 0 &&
     Number.isFinite(targetValue) &&
@@ -194,7 +209,7 @@ function GoalSheet({
           numeric
           placeholder="0"
           value={target}
-          onChange={(e) => setTarget(e.target.value.replace(/[^0-9.]/g, ''))}
+          onChange={(e) => setTarget(groupAmount(e.target.value))}
         />
         {locked ? (
           <Field
@@ -211,7 +226,7 @@ function GoalSheet({
             numeric
             placeholder="0"
             value={current}
-            onChange={(e) => setCurrent(e.target.value.replace(/[^0-9.]/g, ''))}
+            onChange={(e) => setCurrent(groupAmount(e.target.value))}
           />
         )}
         <Field label="Target date" type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />

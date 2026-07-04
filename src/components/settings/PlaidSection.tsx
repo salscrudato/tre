@@ -288,7 +288,7 @@ export function PlaidSection() {
       <div className="flex flex-col gap-3">
         <p className="text-callout text-ink-2">
           {configured
-            ? 'Connect Betterment for read-only balances that refresh about once a day. It never uses our login or sees a password, and entering balances by hand below always works.'
+            ? 'Connect Betterment for read-only balances that refresh about once a day. The sign-in happens inside the secure Plaid window; this app never sees the password. Entering balances by hand below always works.'
             : WAITING_COPY}
         </p>
 
@@ -302,7 +302,7 @@ export function PlaidSection() {
               {lastSyncedDate && <span className="text-muted">Last synced {relativeTime(lastSyncedDate)}</span>}
             </span>
             {(syncError || syncStale) && (
-              <p className="text-caption text-warning">
+              <p className="text-caption text-warning-strong">
                 {syncError
                   ? `Last sync failed: ${syncError}`
                   : 'Balances have not synced in over 48 hours. Tap Sync now to refresh them.'}
@@ -331,9 +331,9 @@ export function PlaidSection() {
               <div key={acc.plaidAccountId} className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
                   <div className="truncate text-callout text-ink">{acc.name}</div>
-                  <div className="text-caption text-muted tabular-nums">
+                  <div className="tnum text-caption text-muted">
                     {acc.mask ? `Ends ${acc.mask}` : 'No last four'}
-                    {' • '}
+                    {', '}
                     {acc.balance != null ? formatCurrency(acc.balance) : 'Balance pending'}
                   </div>
                 </div>

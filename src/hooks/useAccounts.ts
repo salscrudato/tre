@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { CONFIG_STALE_TIME } from '../lib/queryClient'
 import type { Account } from '../types'
 import {
   createAccount,
-  creditAccount,
   deleteAccount,
   listAccounts,
   updateAccount,
@@ -27,7 +27,7 @@ const EMPTY_ACCOUNTS = Object.freeze([]) as unknown as Account[]
 
 export function useAccounts() {
   const qc = useQueryClient()
-  const query = useQuery({ queryKey: KEY, queryFn: listAccounts })
+  const query = useQuery({ queryKey: KEY, queryFn: listAccounts, staleTime: CONFIG_STALE_TIME })
   const invalidate = () => qc.invalidateQueries({ queryKey: KEY })
 
   const create = useMutation({
@@ -37,23 +37,6 @@ export function useAccounts() {
   const update = useMutation({
     mutationFn: (vars: { id: string; patch: AccountPatch }) => updateAccount(vars.id, vars.patch),
     onSuccess: invalidate,
-  })
-  // Atomic credit (a savings contribution lifts the account). Optimistically bumps the
-  // balance so the house meter moves instantly, rolls back on error, reconciles on settle.
-  const credit = useMutation({
-    mutationFn: (vars: { id: string; delta: number }) => creditAccount(vars.id, vars.delta),
-    onMutate: async (vars) => {
-      await qc.cancelQueries({ queryKey: KEY })
-      const previous = qc.getQueryData<Account[]>(KEY)
-      qc.setQueryData<Account[]>(KEY, (old) =>
-        (old ?? []).map((a) => (a.id === vars.id ? { ...a, balance: a.balance + vars.delta } : a)),
-      )
-      return { previous }
-    },
-    onError: (_error, _vars, context) => {
-      if (context?.previous) qc.setQueryData(KEY, context.previous)
-    },
-    onSettled: invalidate,
   })
   const remove = useMutation({
     mutationFn: (id: string) => deleteAccount(id),
@@ -66,7 +49,6 @@ export function useAccounts() {
     isError: query.isError,
     create,
     update,
-    credit,
     remove,
   }
 }

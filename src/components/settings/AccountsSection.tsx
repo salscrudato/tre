@@ -9,7 +9,7 @@ import {
   houseSavingsInvestedFromAccounts,
 } from '../../hooks/useAccounts'
 import { unlinkAccountFromPlaid } from '../../services/accounts'
-import { formatCurrency, titleCase } from '../../lib/format'
+import { formatCurrency, groupAmount, parseAmount, titleCase } from '../../lib/format'
 import { Card } from '../Card'
 import { Button } from '../Button'
 import { Field } from '../Field'
@@ -68,15 +68,15 @@ export function AccountsSection() {
                   className="flex w-full items-center justify-between gap-3 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
                 >
                   <span className="min-w-0">
-                    <span className="flex items-center gap-1.5 truncate text-callout text-ink">
-                      {titleCase(account.name)}
+                    <span className="flex min-w-0 items-center gap-1.5 text-callout text-ink">
+                      <span className="truncate">{titleCase(account.name)}</span>
                       {account.plaidAccountId && (
-                        <span className="inline-flex items-center rounded-pill bg-[color-mix(in_srgb,var(--color-accent)_14%,transparent)] px-1.5 py-0.5 text-caption font-medium text-accent-strong">
+                        <span className="inline-flex shrink-0 items-center rounded-pill bg-[color-mix(in_srgb,var(--color-accent)_14%,transparent)] px-1.5 py-0.5 text-caption font-medium text-accent-strong">
                           Betterment
                         </span>
                       )}
                       {account.countsTowardHouse && (
-                        <span className="inline-flex items-center gap-1 rounded-pill bg-[color-mix(in_srgb,var(--color-accent)_14%,transparent)] px-1.5 py-0.5 text-caption font-medium text-accent-strong">
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-[color-mix(in_srgb,var(--color-accent)_14%,transparent)] px-1.5 py-0.5 text-caption font-medium text-accent-strong">
                           <HomeIcon size={11} strokeWidth={2.25} aria-hidden="true" />
                           {account.houseAllocation != null ? 'Part to house' : 'House'}
                         </span>
@@ -85,7 +85,7 @@ export function AccountsSection() {
                     <span className="block text-caption text-muted">
                       {TYPE_LABEL[account.type]}
                       {account.countsTowardHouse && account.houseAllocation != null && (
-                        <>, {formatCurrency(accountHouseAmount(account), { cents: false })} counts</>
+                        <>, <span className="tnum">{formatCurrency(accountHouseAmount(account), { cents: false })}</span> counts</>
                       )}
                     </span>
                   </span>
@@ -180,15 +180,15 @@ function AccountSheet({
 }) {
   const [name, setName] = useState(account?.name ?? '')
   const [type, setType] = useState<AccountType>(account?.type ?? 'cash')
-  const [balance, setBalance] = useState(account ? String(account.balance) : '')
+  const [balance, setBalance] = useState(account ? groupAmount(String(account.balance)) : '')
   const [countsTowardHouse, setCountsTowardHouse] = useState(account?.countsTowardHouse ?? false)
   // Optional partial allocation: blank means the full balance counts. Used for Build
   // Wealth, where only a slice closes the gap to the down payment goal.
-  const [allocation, setAllocation] = useState(account?.houseAllocation != null ? String(account.houseAllocation) : '')
+  const [allocation, setAllocation] = useState(account?.houseAllocation != null ? groupAmount(String(account.houseAllocation)) : '')
   const [note, setNote] = useState(account?.note ?? '')
 
-  const balanceValue = Number.parseFloat(balance)
-  const allocationValue = Number.parseFloat(allocation)
+  const balanceValue = parseAmount(balance)
+  const allocationValue = parseAmount(allocation)
   const allocationOk =
     allocation.trim() === '' || (Number.isFinite(allocationValue) && allocationValue >= 0)
   const canSave =
@@ -244,7 +244,7 @@ function AccountSheet({
           numeric
           placeholder="0.00"
           value={balance}
-          onChange={(event) => setBalance(event.target.value.replace(/[^0-9.]/g, ''))}
+          onChange={(event) => setBalance(groupAmount(event.target.value))}
           hint={
             account?.plaidAccountId
               ? 'This balance syncs from Betterment and will be replaced at the next sync'
@@ -284,7 +284,7 @@ function AccountSheet({
             numeric
             placeholder="Full balance"
             value={allocation}
-            onChange={(event) => setAllocation(event.target.value.replace(/[^0-9.]/g, ''))}
+            onChange={(event) => setAllocation(groupAmount(event.target.value))}
             hint="Leave blank to count the full balance. Set a portion (Build Wealth) to count only part toward the goal."
           />
         )}

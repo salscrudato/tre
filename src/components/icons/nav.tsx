@@ -41,6 +41,42 @@ export function HouseKeyIcon(props: IconProps) {
   )
 }
 
+// A price tag: the purchase planner.
+export function TagIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M12.6 3.5H5a1.5 1.5 0 0 0-1.5 1.5v7.6a1.5 1.5 0 0 0 .44 1.06l7.4 7.4a1.5 1.5 0 0 0 2.12 0l7.1-7.1a1.5 1.5 0 0 0 0-2.12l-7.4-7.4a1.5 1.5 0 0 0-1.06-.44Z" />
+      <circle cx="8.2" cy="8.2" r="1.1" />
+    </Base>
+  )
+}
+
+// An itemized list: the budget, every planned line in one place.
+export function BudgetIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M5.5 6.5h.01" />
+      <path d="M9.5 6.5H19" />
+      <path d="M5.5 12h.01" />
+      <path d="M9.5 12H19" />
+      <path d="M5.5 17.5h.01" />
+      <path d="M9.5 17.5H19" />
+    </Base>
+  )
+}
+
+// A wallet: the money coming in.
+export function WalletIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M4 7.5a2 2 0 0 1 2-2h9" />
+      <path d="M4 7.5h13a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-9Z" />
+      <path d="M19.5 11.5H16a1.5 1.5 0 0 0 0 3h3.5" />
+      <path d="M16.4 13h.01" />
+    </Base>
+  )
+}
+
 // A tuned gear: configuration.
 export function SettingsIcon(props: IconProps) {
   return (
@@ -72,8 +108,8 @@ export function CloseIcon(props: IconProps) {
   )
 }
 
-// The add glyph for the floating log action. A balanced plus on the shared grid; the
-// thicker 2.2 stroke matches the prominence of the round accent button it sits in.
+// The add glyph for add rows and buttons (Budget, Settings, the grids). A balanced plus
+// on the shared grid, with a slightly thicker 2.2 stroke so it stays crisp at small sizes.
 export function PlusIcon(props: IconProps) {
   return (
     <Base strokeWidth={2.2} {...props}>

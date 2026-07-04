@@ -13,16 +13,19 @@ import { Splash } from './components/Splash'
 const Login = lazy(() => import('./routes/Login'))
 const Home = lazy(() => import('./routes/Home'))
 const Spending = lazy(() => import('./routes/Spending'))
+const Budget = lazy(() => import('./routes/Budget'))
+const Income = lazy(() => import('./routes/Income'))
 const House = lazy(() => import('./routes/House'))
 const Bills = lazy(() => import('./routes/Recurring'))
 const Optimize = lazy(() => import('./routes/Optimize'))
+const Plan = lazy(() => import('./routes/Plan'))
 const Settings = lazy(() => import('./routes/Settings'))
 
 // Routes. Primary navigation lives in the header hamburger drawer (Home, Spending,
-// House, Settings). Logging happens via the floating Log button, which opens the
-// Quick Add in a sheet from any screen except Home, whose hero is the Quick Add
-// itself. Bills and Optimize are reached from within Spending and House. Legacy paths
-// redirect so a cached PWA link still lands on the right screen.
+// Budget, Income, House, Settings). Logging happens only on Home (the Quick Add hero),
+// so there is no floating Log button anywhere. Bills, Optimize, and the purchase planner
+// are reached from within Spending and House. Legacy paths redirect so a cached PWA link
+// still lands on the right screen.
 export default function App() {
   return (
     <ThemeProvider>
@@ -36,9 +39,12 @@ export default function App() {
                   <Route element={<AppShell />}>
                     <Route path="/" element={<Home />} />
                     <Route path="/spending" element={<Spending />} />
+                    <Route path="/budget" element={<Budget />} />
+                    <Route path="/income" element={<Income />} />
                     <Route path="/house" element={<House />} />
                     <Route path="/bills" element={<Bills />} />
                     <Route path="/optimize" element={<Optimize />} />
+                    <Route path="/plan" element={<Plan />} />
                     <Route path="/settings" element={<Settings />} />
                     <Route path="/dashboard" element={<Navigate to="/spending" replace />} />
                     <Route path="/recurring" element={<Navigate to="/bills" replace />} />

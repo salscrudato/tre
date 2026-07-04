@@ -55,6 +55,11 @@ households/{hid}/fixedExpenses/{fixedId}
   lever?: "housing" | "necessity" | "discretionary" | "savings"   // see 3.7
   alternativeAmount?: number   // optional cheaper option for a necessity or
                                // discretionary line; the saving is the difference
+  cadence?: "monthly" | "paidInFull"   // paidInFull: amount is the one-time price
+  coverageStart?: string       // "YYYY-MM", first covered month (paidInFull only)
+  coverageMonths?: number      // months the payment covers (paidInFull only); the
+                               // budget charges amount / coverageMonths inside the
+                               // window and nothing outside it (lib/summary.ts)
 
 households/{hid}/budget/{monthKey}        // monthKey = "YYYY-MM", or a single doc "template"
   byCategoryId: { [categoryId: string]: number }   // monthly planned amount per category
@@ -67,7 +72,26 @@ households/{hid}/transactions/{txId}
   note?: string
   createdBy: "Sal" | "Lisa"
   createdAt: Timestamp
+  goalId?: string              // savings entry: which goal its credit landed on
+  accountId?: string           // savings entry: which account its credit landed on
+  kind?: "billPayment" | "packagePurchase" | "packageSession"
+                               // one-off payment rows stay in the ledger but are
+                               // excluded from spent totals (lib/budget.ts,
+                               // isCountedSpend); a session row counts as spent and
+                               // moves its package's sessionsUsed in the same batch
+  billId?: string              // the paid-in-full bill a billPayment row records
+  packageId?: string           // the package a purchase or session row belongs to
   // projection is computed on the fly, never stored
+
+households/{hid}/packages/{packageId}     // prepaid consumables (a wax package)
+  name: string
+  categoryId: string           // the discretionary category sessions count against
+  price: number                // the one-time price paid up front
+  sessions: number             // how many sessions it bought
+  sessionsUsed: number         // moves only with packageSession ledger rows
+  purchasedOn: string          // ISO date
+  active: boolean
+  note?: string
 
 households/{hid}/goals/{goalId}
   name: string

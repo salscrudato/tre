@@ -5,7 +5,7 @@ import {
   houseSavingsFromAccounts,
   houseSavingsInvestedFromAccounts,
 } from './accounts'
-import { billActiveOn } from './summary'
+import { billActiveOn, billMonthlyAmount } from './summary'
 
 export interface HouseContext extends HouseImpactInput {
   houseGoal: Goal
@@ -27,6 +27,19 @@ export interface HouseContext extends HouseImpactInput {
   scheduledBillsMonthly: number
 }
 
+// The single, rename-proof way to identify the primary house goal. The seed gives it a
+// stable id ('goal_house'), so prefer that; fall back to the legacy name-substring match
+// for any goal created before the id existed. Every surface (house.ts, useHouseModel,
+// Settings, the plan sections) routes through this so renaming the goal in Settings never
+// silently disables the whole house engine, and a coincidental name never hijacks it.
+export function findHouseGoal(goals: Goal[]): Goal | null {
+  return (
+    goals.find((g) => g.id === 'goal_house') ??
+    goals.find((g) => g.name.toLowerCase().includes('house')) ??
+    null
+  )
+}
+
 // Central source for the house projection inputs, derived from the live settings, the
 // House goal, the accounts flagged as house savings, and our planned monthly house
 // contribution. Home, Bills, Spending, and Optimize all read this, so they share
@@ -43,11 +56,11 @@ export function houseContext(
   accounts: Account[] = [],
   contribution?: number | ContributionSchedule,
 ): HouseContext | null {
-  const houseGoal = goals.find((g) => g.name.toLowerCase().includes('house'))
+  const houseGoal = findHouseGoal(goals)
   if (!houseGoal) return null
   const scheduledBillsMonthly = fixed
     .filter((f) => f.active && billActiveOn(f, today) && f.goalId === houseGoal.id)
-    .reduce((sum, f) => sum + f.amount, 0)
+    .reduce((sum, f) => sum + billMonthlyAmount(f), 0)
   // Accept either a flat monthly amount (legacy callers, tests) or a full schedule. When
   // omitted, fall back to the scheduled house bills as a flat contribution.
   const baselineSchedule: ContributionSchedule =
@@ -80,7 +93,7 @@ export function houseContext(
     targetDate: settings.housePurchaseTargetDate,
     today,
     downPaymentReturn: settings.downPaymentReturnAssumption,
-    // The single configurable PITI target (default 6500). Legacy households written
+    // The single configurable PITI target (default 6000). Legacy households written
     // before this field fall back to the midpoint of the old min/max band.
     targetPiti: settings.targetPiti ?? (settings.targetPitiMin + settings.targetPitiMax) / 2,
     mortgageRate: settings.mortgageRateAssumption,

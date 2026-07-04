@@ -102,7 +102,7 @@ export function clampToCents(amount: number): number {
 
 // Keep only digits and a single decimal point with at most two places. The single
 // sanitizer for money text inputs, so the Quick Add and the transaction edit accept
-// the same precision.
+// the same precision. Commas and any other separators are stripped, never rejected.
 export function sanitizeAmount(raw: string): string {
   const cleaned = raw.replace(/[^0-9.]/g, '')
   const firstDot = cleaned.indexOf('.')
@@ -113,6 +113,26 @@ export function sanitizeAmount(raw: string): string {
     .replace(/\./g, '')
     .slice(0, 2)
   return `${intPart}.${decPart}`
+}
+
+// Sanitize a money input keystroke and regroup the integer part with commas, so
+// typing 2221 (or pasting "2,221") reads back as "2,221" live. Trailing dots and
+// partial decimals survive ("2,221." while typing cents). The single formatter for
+// every money text input; parse what it produces with parseAmount, never parseFloat.
+export function groupAmount(raw: string): string {
+  const sanitized = sanitizeAmount(raw)
+  if (sanitized.length === 0) return ''
+  const dot = sanitized.indexOf('.')
+  const intPart = dot === -1 ? sanitized : sanitized.slice(0, dot)
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  return dot === -1 ? grouped : `${grouped}.${sanitized.slice(dot + 1)}`
+}
+
+// Parse a money input tolerantly: commas, spaces, and a leading dollar sign are all
+// fine. NaN when there is no number, matching Number.parseFloat, so existing
+// Number.isFinite guards keep working.
+export function parseAmount(raw: string): number {
+  return Number.parseFloat(sanitizeAmount(raw))
 }
 
 // Words kept lowercase inside a title (unless they lead the string). Small set,

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { CONFIG_STALE_TIME } from '../lib/queryClient'
 import type { Goal } from '../types'
-import { createGoal, creditGoal, deleteGoal, listGoals, updateGoal } from '../services/goals'
+import { createGoal, deleteGoal, listGoals, updateGoal } from '../services/goals'
 
 const KEY = ['goals'] as const
 
@@ -9,7 +10,7 @@ const EMPTY_GOALS = Object.freeze([]) as unknown as Goal[]
 
 export function useGoals() {
   const qc = useQueryClient()
-  const query = useQuery({ queryKey: KEY, queryFn: listGoals })
+  const query = useQuery({ queryKey: KEY, queryFn: listGoals, staleTime: CONFIG_STALE_TIME })
   const invalidate = () => qc.invalidateQueries({ queryKey: KEY })
 
   const create = useMutation({
@@ -20,23 +21,6 @@ export function useGoals() {
     mutationFn: (vars: { id: string; patch: Partial<Omit<Goal, 'id'>> }) =>
       updateGoal(vars.id, vars.patch),
     onSuccess: invalidate,
-  })
-  // Atomic credit (savings logging). Optimistically lifts the balance so the house
-  // meter moves instantly, rolls back on error, and reconciles on settle.
-  const credit = useMutation({
-    mutationFn: (vars: { id: string; delta: number }) => creditGoal(vars.id, vars.delta),
-    onMutate: async (vars) => {
-      await qc.cancelQueries({ queryKey: KEY })
-      const previous = qc.getQueryData<Goal[]>(KEY)
-      qc.setQueryData<Goal[]>(KEY, (old) =>
-        (old ?? []).map((g) => (g.id === vars.id ? { ...g, current: g.current + vars.delta } : g)),
-      )
-      return { previous }
-    },
-    onError: (_error, _vars, context) => {
-      if (context?.previous) qc.setQueryData(KEY, context.previous)
-    },
-    onSettled: invalidate,
   })
   const remove = useMutation({
     mutationFn: (id: string) => deleteGoal(id),
@@ -49,7 +33,6 @@ export function useGoals() {
     isError: query.isError,
     create,
     update,
-    credit,
     remove,
   }
 }

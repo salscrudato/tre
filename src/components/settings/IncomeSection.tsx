@@ -11,7 +11,7 @@ import {
   monthlyNetIncomeAt,
   nextIncomeStart,
 } from '../../lib/summary'
-import { formatCurrency, formatDate, titleCase } from '../../lib/format'
+import { formatCurrency, formatDate, groupAmount, parseAmount, titleCase } from '../../lib/format'
 import { Card } from '../Card'
 import { Button } from '../Button'
 import { Field } from '../Field'
@@ -37,14 +37,14 @@ const FREQUENCY_LABEL: Record<IncomeFrequency, string> = {
   monthly: 'monthly',
 }
 
-export function IncomeSection() {
+export function IncomeSection({ hideSummary = false, title = 'Income' }: { hideSummary?: boolean; title?: string } = {}) {
   const { user } = useAuth()
   const { incomes, isLoading, isError, create, update, remove } = useIncomes()
   const today = useToday()
   const [sheet, setSheet] = useState<SheetState>(null)
 
   return (
-    <Card title="Income" action={<AddButton onClick={() => setSheet({ mode: 'add' })} />}>
+    <Card title={title} action={<AddButton onClick={() => setSheet({ mode: 'add' })} />}>
       {isLoading ? (
         <div role="status" className="flex items-center justify-center gap-2 py-6 text-muted">
           <Spinner size={18} />
@@ -85,7 +85,9 @@ export function IncomeSection() {
         </ul>
       )}
 
-      {!isLoading && !isError && incomes.length > 0 && <IncomeSummary incomes={incomes} today={today} />}
+      {!hideSummary && !isLoading && !isError && incomes.length > 0 && (
+        <IncomeSummary incomes={incomes} today={today} />
+      )}
 
       {sheet && (
         <IncomeSheet
@@ -114,7 +116,8 @@ export function IncomeSection() {
 
 // Per earner and combined, the team's monthly take-home at a glance. Teammates, one
 // household: the combined total leads, each person's share sits beneath it. Income in
-// effect now (Lisa's pay starts in September), with the ramped total noted below.
+// effect now (an income with a future start month is excluded), with the ramped
+// total noted below when a step exists.
 function IncomeSummary({ incomes, today }: { incomes: Income[]; today: Date }) {
   const byOwner = monthlyIncomeByOwnerAt(incomes, today)
   const combined = monthlyNetIncomeAt(incomes, today)
@@ -188,14 +191,17 @@ function IncomeSheet({
 }) {
   const [name, setName] = useState(income?.name ?? '')
   const [owner, setOwner] = useState<MemberName>(income?.owner ?? defaultOwner)
-  const [amount, setAmount] = useState(income ? String(income.netPerPaycheck) : '')
+  const [amount, setAmount] = useState(income ? groupAmount(String(income.netPerPaycheck)) : '')
   const [frequency, setFrequency] = useState<IncomeFrequency>(income?.frequency ?? 'semimonthly')
   const [payDays, setPayDays] = useState(income ? income.payDays.join(', ') : '15, 30')
   const [startMonth, setStartMonth] = useState(toMonthInput(income?.startMonth))
 
-  const amountValue = Number.parseFloat(amount)
+  const amountValue = parseAmount(amount)
   const days = parsePayDays(payDays)
-  const canSave = name.trim().length > 0 && Number.isFinite(amountValue) && amountValue > 0 && days.length > 0
+  // Pay days no longer gate saving: they drive no monthly calculation (incomeToMonthly uses
+  // fixed per-frequency multipliers) and are meaningless for biweekly pay. Name, amount, and
+  // frequency are all that is needed to add an earner.
+  const canSave = name.trim().length > 0 && Number.isFinite(amountValue) && amountValue > 0
 
   return (
     <Sheet
@@ -250,20 +256,24 @@ function IncomeSheet({
           numeric
           placeholder="0.00"
           value={amount}
-          onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+          onChange={(e) => setAmount(groupAmount(e.target.value))}
         />
         <div className="flex flex-col gap-1.5">
           <span className="text-caption text-ink-2">Frequency</span>
           <Segmented value={frequency} onChange={setFrequency} options={FREQUENCY_OPTIONS} ariaLabel="Pay frequency" />
         </div>
-        <Field
-          label="Pay days"
-          numeric
-          value={payDays}
-          onChange={(e) => setPayDays(e.target.value)}
-          hint="Days of the month, comma separated. For example 15, 30."
-          error={payDays.trim().length > 0 && days.length === 0 ? 'Enter days between 1 and 31.' : undefined}
-        />
+        {/* Pay days apply only to a monthly or twice-a-month schedule (biweekly pay lands
+            every 2 weeks, not on days of the month). Optional either way. */}
+        {frequency !== 'biweekly' && (
+          <Field
+            label="Pay days (optional)"
+            numeric
+            value={payDays}
+            onChange={(e) => setPayDays(e.target.value)}
+            hint="Days of the month, comma separated. For example 15, 30."
+            error={payDays.trim().length > 0 && days.length === 0 ? 'Enter days between 1 and 31.' : undefined}
+          />
+        )}
         <Field
           label="Starts (optional)"
           type="month"

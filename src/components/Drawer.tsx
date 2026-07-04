@@ -84,10 +84,12 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
   return createPortal(
     <div
       className={cn('fixed inset-0 z-50', closing && 'pointer-events-none')}
-      role="dialog"
-      aria-modal="true"
+      // While the exit plays the node is hidden from assistive tech, so it must not
+      // also claim to be a modal dialog: role and aria-modal apply only while open.
+      role={closing ? undefined : 'dialog'}
+      aria-modal={closing ? undefined : 'true'}
       aria-hidden={closing || undefined}
-      aria-label="Menu"
+      aria-label={closing ? undefined : 'Menu'}
     >
       <button
         type="button"
@@ -95,7 +97,7 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
         tabIndex={-1}
         onClick={onClose}
         className={cn(
-          'absolute inset-0 bg-black/35',
+          'absolute inset-0 bg-[var(--color-scrim)]',
           'motion-safe:transition-opacity motion-safe:duration-[var(--dur-fast)]',
           closing ? 'opacity-0' : 'motion-safe:animate-[fade-in_var(--dur-fast)_ease-out]',
         )}
@@ -108,7 +110,13 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
           'motion-safe:transition-transform motion-safe:duration-[var(--dur-fast)] motion-safe:ease-in',
           closing ? '-translate-x-full' : 'motion-safe:animate-[drawer-in_var(--dur)_var(--ease-spring)]',
         )}
-        style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+        style={{
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingBottom: 'env(safe-area-inset-bottom)',
+          // In landscape on a notched iPhone the left inset is large; without this the
+          // wordmark and nav rows sit under the notch.
+          paddingLeft: 'env(safe-area-inset-left)',
+        }}
       >
         <div className="flex items-center justify-between gap-3 px-5 py-4">
           <Logo />

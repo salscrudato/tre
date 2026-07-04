@@ -1,6 +1,6 @@
 import { type InputHTMLAttributes, type ReactNode, useId, useState } from 'react'
 import { cn } from '../lib/cn'
-import { sanitizeAmount } from '../lib/format'
+import { groupAmount } from '../lib/format'
 
 type FieldOwnProps = {
   label: string
@@ -110,9 +110,9 @@ export function AmountField({
           autoFocus={autoFocus}
           inputMode="decimal"
           enterKeyHint="done"
-          maxLength={12}
+          maxLength={16}
           value={value}
-          onChange={(event) => onValueChange(sanitizeAmount(event.target.value))}
+          onChange={(event) => onValueChange(groupAmount(event.target.value))}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           placeholder={placeholder}
@@ -127,8 +127,10 @@ export function AmountField({
       <span
         aria-hidden="true"
         className={cn(
+          // Keyboard focus is the app's most important control, so the focused underline is
+          // unmistakably wider and full strength, not a subtle nudge over the resting state.
           'mt-3 h-[2px] rounded-pill bg-accent transition-[width,opacity] duration-[var(--dur)] ease-[var(--ease-spring)] motion-reduce:transition-none',
-          focused ? 'w-12 opacity-90' : empty ? 'w-8 opacity-25' : 'w-10 opacity-45',
+          focused ? 'w-20 opacity-100' : empty ? 'w-8 opacity-25' : 'w-10 opacity-45',
         )}
       />
     </div>

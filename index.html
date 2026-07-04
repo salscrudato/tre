@@ -4,8 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <!-- Single theme-color meta: the pre-paint script below sets its initial value and
+         ThemeProvider keeps it in sync with the applied theme after that. -->
+    <meta name="theme-color" content="#f5f5f7" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon-180.png" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -17,8 +18,10 @@
     <link rel="preconnect" href="https://securetoken.googleapis.com" crossorigin />
     <title>Tre</title>
     <script>
-      // Light by default, set before first paint to avoid a flash. The in-app toggle
-      // persists the choice as a device preference so an installed app keeps its theme.
+      // Light by default, set before first paint to avoid a flash. ThemeProvider writes
+      // the in-app choice to localStorage 'tre-theme': a device-level display preference
+      // only (Firestore stays the source of truth for app data), so an installed app
+      // keeps its theme across cold starts.
       ;(function () {
         var theme = 'light'
         try {
@@ -28,6 +31,11 @@
           // Storage unavailable (private mode): stay light.
         }
         document.documentElement.setAttribute('data-theme', theme)
+        // Seed the single theme-color meta before paint so the chrome never flashes the
+        // wrong shade; values mirror --color-bg per theme in src/index.css. ThemeProvider
+        // takes over from here.
+        var meta = document.querySelector('meta[name="theme-color"]')
+        if (meta) meta.setAttribute('content', theme === 'dark' ? '#000000' : '#f5f5f7')
       })()
     </script>
   </head>

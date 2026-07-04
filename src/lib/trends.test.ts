@@ -31,4 +31,10 @@ describe('recentNoteSuggestions', () => {
   it('returns an empty array when there are no notes', () => {
     expect(recentNoteSuggestions([])).toEqual([])
   })
+
+  it('skips the auto-written notes on special rows (payments, package sessions)', () => {
+    const session: Transaction = { ...tx('Wax package session', 's'), kind: 'packageSession', packageId: 'p1' }
+    const payment: Transaction = { ...tx('Geico paid in full', 'g'), kind: 'billPayment', billId: 'b1' }
+    expect(recentNoteSuggestions([session, payment, tx('Lunch', 'l')])).toEqual(['Lunch'])
+  })
 })

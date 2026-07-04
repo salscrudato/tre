@@ -18,6 +18,28 @@ const authPopupHeaders = {
   'Cross-Origin-Embedder-Policy': 'unsafe-none',
 }
 
+// Preload the self-hosted Inter woff2 so the browser starts fetching it in parallel with
+// the app CSS instead of only after CSS parses. The filename is content-hashed at build, so
+// the URL is read from the emitted bundle rather than hardcoded. Build only (no-op in dev).
+function preloadInterFont() {
+  return {
+    name: 'preload-inter-font',
+    transformIndexHtml(_html: string, ctx: { bundle?: Record<string, unknown> }) {
+      const bundle = ctx.bundle
+      if (!bundle) return
+      const fontFile = Object.keys(bundle).find((file) => /inter-.*\.woff2$/.test(file))
+      if (!fontFile) return
+      return [
+        {
+          tag: 'link',
+          attrs: { rel: 'preload', as: 'font', type: 'font/woff2', crossorigin: '', href: `/${fontFile}` },
+          injectTo: 'head' as const,
+        },
+      ]
+    },
+  }
+}
+
 export default defineConfig({
   server: { headers: authPopupHeaders },
   preview: { headers: authPopupHeaders },
@@ -46,6 +68,7 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    preloadInterFont(),
     VitePWA({
       registerType: 'autoUpdate',
       // We register the service worker ourselves in main.tsx so we can also check for a
@@ -61,7 +84,7 @@ export default defineConfig({
         start_url: '/',
         scope: '/',
         display: 'standalone',
-        theme_color: '#1fa85a',
+        theme_color: '#f5f5f7',
         background_color: '#f5f5f7',
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },

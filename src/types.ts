@@ -6,6 +6,11 @@
 import type { Timestamp } from 'firebase/firestore'
 
 export type MemberName = 'Sal' | 'Lisa'
+// Who a budget item belongs to. A bill can be one person's or shared by both, so the
+// Budget and Spending owner toggle can show each of us our own items and the shared
+// picture. Income and logged expenses stay per person (a paycheck and a tap each have
+// one owner); only bills carry the shared option.
+export type BillOwner = MemberName | 'Both'
 export type CategoryType = 'fixed' | 'variable' | 'savings'
 
 // How a recurring bill maps to home buying power. Housing is our home and is never
@@ -16,6 +21,22 @@ export type BillLever = 'housing' | 'necessity' | 'discretionary' | 'savings'
 export type IncomeFrequency = 'semimonthly' | 'biweekly' | 'monthly'
 export type AccountType = 'cash' | 'taxable' | 'retirement'
 
+// How a bill is paid. Monthly is the default. A paid-in-full bill (annual car
+// insurance, a prepaid plan) is one real outflow whose amount covers a window of
+// months; the budget spreads amount / coverageMonths across the covered months and
+// never also charges a monthly amount inside that window.
+export type BillCadence = 'monthly' | 'paidInFull'
+
+// Why a ledger row exists beyond ordinary spending. These rows keep the ledger honest
+// about real cash movements without double counting:
+//   billPayment: the one real outflow of a paid-in-full bill. The budget already
+//     counts it as the monthly spread, so this row is excluded from spent totals.
+//   packagePurchase: the one real outflow of a prepaid package. The budget counts it
+//     as sessions are used, so this row is excluded from spent totals.
+//   packageSession: one session drawn from a prepaid package at its per-session cost.
+//     This is where the package's money is recognized, so it DOES count as spent.
+export type TransactionKind = 'billPayment' | 'packagePurchase' | 'packageSession'
+
 export interface HouseholdSettings {
   currency: string
   assumedAnnualReturn: number
@@ -23,7 +44,7 @@ export interface HouseholdSettings {
   housePurchaseTargetDate: string
   targetPitiMin: number
   targetPitiMax: number
-  // The single monthly PITI the house affordability solves against (default 6500).
+  // The single monthly PITI the house affordability solves against (default 6000).
   targetPiti: number
   mortgageRateAssumption: number
   loanTermYears: number
@@ -89,7 +110,9 @@ export interface FixedExpense {
   amount: number
   categoryId: string
   dueDay: number
-  owner: MemberName
+  // Sal, Lisa, or Both (a shared bill like rent or utilities). Older bills stored a
+  // single member; that still reads correctly, and Both is opt-in from the bill editor.
+  owner: BillOwner
   active: boolean
   endDate?: string
   goalId?: string
@@ -102,6 +125,15 @@ export interface FixedExpense {
   // plan). When set on a necessity or discretionary bill, the realistic saving is the
   // difference (amount minus this), and the home impact is computed from that.
   alternativeAmount?: number
+  // Absent means monthly. When 'paidInFull', `amount` is the one-time price and the
+  // coverage fields below say which months it covers; the budget charges
+  // amount / coverageMonths only inside that window.
+  cadence?: BillCadence
+  // First covered month as "YYYY-MM". Only meaningful when cadence is 'paidInFull'.
+  coverageStart?: string
+  // How many months the payment covers (12 for an annual premium). Only meaningful
+  // when cadence is 'paidInFull'.
+  coverageMonths?: number
 }
 
 export interface Transaction {
@@ -112,6 +144,38 @@ export interface Transaction {
   note?: string
   createdBy: MemberName
   createdAt?: Timestamp
+  // A savings entry records where its balance credit landed (the flagged house
+  // account, or a goal's stored balance), so deleting or editing the entry can
+  // reverse the credit exactly. Absent on ordinary spending.
+  goalId?: string
+  accountId?: string
+  // Absent on ordinary spending. See TransactionKind for how each kind is counted.
+  kind?: TransactionKind
+  // The paid-in-full bill this payment row belongs to (kind 'billPayment').
+  billId?: string
+  // The prepaid package this row belongs to (kind 'packagePurchase' or
+  // 'packageSession'). A session row also moved the package's sessionsUsed counter,
+  // so deleting the row restores the session.
+  packageId?: string
+}
+
+// A prepaid consumable package (a set of wax sessions, a class pack): one real
+// outflow up front, drawn down one session at a time. Logging a session recognizes
+// price / sessions as spending in that month instead of adding a new outflow, so the
+// package's money is counted exactly once, spread over its use.
+export interface Package {
+  id: string
+  name: string
+  categoryId: string
+  // The one-time price paid up front.
+  price: number
+  // How many sessions the package bought, and how many are used so far.
+  sessions: number
+  sessionsUsed: number
+  // The purchase date as "YYYY-MM-DD".
+  purchasedOn: string
+  active: boolean
+  note?: string
 }
 
 // A budget document keyed by month ("YYYY-MM") or the default "template".

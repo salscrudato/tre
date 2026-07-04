@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { cn } from '../../lib/cn'
-import { clampToCents, sanitizeAmount } from '../../lib/format'
+import { clampToCents, groupAmount, parseAmount, sanitizeAmount } from '../../lib/format'
 import { CloseIcon, PlusIcon } from '../icons/nav'
 import { Spinner } from '../Spinner'
 
@@ -57,6 +57,9 @@ export type DataGridProps<Row> = {
   rows: Row[]
   columns: GridColumn<Row>[]
   rowKey: (row: Row) => string
+  // The accessible name for the table ("Income", "Bills"), read by screen readers when
+  // entering the grid. Optional so one-off grids without a natural name stay valid.
+  label?: string
   // Commit a single cell edit. The value matches the column type: a number for
   // money/number/int, a boolean for toggle, a string for text/select/date.
   onCommit: (row: Row, key: string, value: CellValue) => void
@@ -100,6 +103,7 @@ export function DataGrid<Row>({
   rows,
   columns,
   rowKey,
+  label,
   onCommit,
   onAddRow,
   addLabel = 'Add row',
@@ -178,7 +182,7 @@ export function DataGrid<Row>({
   return (
     <div ref={gridRef} className="overflow-hidden rounded-xl border border-line bg-surface" onKeyDown={onKeyDown}>
       <div className="max-h-[70vh] overflow-auto">
-        <table className="w-full border-collapse text-callout">
+        <table aria-label={label} className="w-full border-collapse text-callout">
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-line" style={{ backgroundColor: 'var(--color-surface-2)' }}>
               {columns.map((col) => (
@@ -237,7 +241,7 @@ export function DataGrid<Row>({
                       style={{ minWidth: col.minWidth }}
                       className={cn('px-1.5 py-1 align-middle', alignClass[col.align ?? defaultAlign(col.type)])}
                     >
-                      <EditableCell row={row} col={col} onCommit={onCommit} />
+                      <EditableCell row={row} col={col} onCommit={onCommit} rowLabel={rowLabel ? rowLabel(row) : undefined} />
                     </td>
                   ))}
                   {showDelete && (
@@ -303,7 +307,8 @@ const inputBase =
   'h-9 w-full rounded-md bg-transparent px-2 text-callout text-ink outline-none transition hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent'
 
 function sanitizeByType(raw: string, type: GridColumnType): string {
-  if (type === 'money') return sanitizeAmount(raw)
+  // Money cells group thousands live; plain numbers (rates, days) stay ungrouped.
+  if (type === 'money') return groupAmount(raw)
   if (type === 'number') return sanitizeAmount(raw)
   if (type === 'int') return raw.replace(/[^0-9]/g, '')
   return raw
@@ -317,7 +322,7 @@ function parseNumeric(draft: string, col: GridColumn<unknown>): number {
     const hi = col.max ?? Number.POSITIVE_INFINITY
     return Math.max(lo, Math.min(hi, base))
   }
-  const n = Number.parseFloat(draft)
+  const n = parseAmount(draft)
   const base = Number.isFinite(n) ? clampToCents(n) : 0
   const lo = col.min ?? Number.NEGATIVE_INFINITY
   const hi = col.max ?? Number.POSITIVE_INFINITY
@@ -328,13 +333,18 @@ function EditableCell<Row>({
   row,
   col,
   onCommit,
+  rowLabel,
 }: {
   row: Row
   col: GridColumn<Row>
   onCommit: (row: Row, key: string, value: CellValue) => void
+  // The row's human name, composed with the column header so each editable cell announces
+  // which row it belongs to (a table of repeated "Amount" fields is otherwise ambiguous).
+  rowLabel?: string
 }) {
   const raw = col.accessor(row)
   const readOnly = col.type === 'readonly' || (col.isReadOnly?.(row) ?? false)
+  const label = rowLabel ? `${rowLabel} ${col.header}` : col.header
 
   if (readOnly) {
     return (
@@ -347,7 +357,7 @@ function EditableCell<Row>({
   if (col.type === 'select') {
     return (
       <select
-        aria-label={col.header}
+        aria-label={label}
         value={String(raw ?? '')}
         onChange={(event) => onCommit(row, col.key, event.target.value)}
         className={cn(inputBase, 'cursor-pointer appearance-none pr-2')}
@@ -368,7 +378,7 @@ function EditableCell<Row>({
         type="button"
         role="switch"
         aria-checked={on}
-        aria-label={col.header}
+        aria-label={label}
         onClick={() => onCommit(row, col.key, !on)}
         className="mx-auto flex h-9 w-12 items-center justify-center rounded-md transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
       >
@@ -395,7 +405,7 @@ function EditableCell<Row>({
     return (
       <input
         type={col.type}
-        aria-label={col.header}
+        aria-label={label}
         value={String(raw ?? '')}
         onChange={(event) => onCommit(row, col.key, event.target.value)}
         className={cn(inputBase, 'tnum')}
@@ -403,7 +413,7 @@ function EditableCell<Row>({
     )
   }
 
-  return <TextLikeCell row={row} col={col} raw={raw} onCommit={onCommit} />
+  return <TextLikeCell row={row} col={col} raw={raw} onCommit={onCommit} label={label} />
 }
 
 function isNumericType(type: GridColumnType): boolean {
@@ -420,13 +430,15 @@ function TextLikeCell<Row>({
   col,
   raw,
   onCommit,
+  label,
 }: {
   row: Row
   col: GridColumn<Row>
   raw: CellValue | null | undefined
   onCommit: (row: Row, key: string, value: CellValue) => void
+  label: string
 }) {
-  const initial = raw == null ? '' : String(raw)
+  const initial = raw == null ? '' : col.type === 'money' ? groupAmount(String(raw)) : String(raw)
   const [draft, setDraft] = useState(initial)
   const [focused, setFocused] = useState(false)
   // Set by Escape so the blur it triggers skips the commit (Escape must truly revert; the
@@ -461,7 +473,7 @@ function TextLikeCell<Row>({
     <input
       type="text"
       inputMode={col.type === 'int' ? 'numeric' : isNumericType(col.type) ? 'decimal' : undefined}
-      aria-label={col.header}
+      aria-label={label}
       placeholder={col.placeholder}
       value={draft}
       onChange={(event) => {

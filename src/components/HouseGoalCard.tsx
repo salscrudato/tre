@@ -1,5 +1,12 @@
 import { useMemo } from 'react'
-import { horizonIsValid, paceReconciliationScheduled, projectedSavingsWithSchedule, yearsUntil } from '../lib/money'
+import {
+  addToSchedule,
+  horizonIsValid,
+  monthsToReachWithSchedule,
+  paceReconciliationScheduled,
+  projectedSavingsWithSchedule,
+  yearsUntil,
+} from '../lib/money'
 import type { HouseContext } from '../lib/house'
 import { useCountUp } from '../hooks/useCountUp'
 import { compactScale, formatCompactScaled, formatCurrency, formatDate } from '../lib/format'
@@ -10,6 +17,10 @@ import { HomeIcon } from './icons/nav'
 export type HouseGoalCardProps = {
   house: HouseContext
   today: Date
+  // The monthly surplus the plan has NOT committed yet (income minus everything,
+  // minus the automatic house transfers). Shown as the work left to do: real money
+  // that could join the transfers and pull the date in.
+  unallocatedMonthly?: number
 }
 
 // THE dashboard hero. The down payment goal, plainly: how much we have toward the
@@ -17,11 +28,12 @@ export type HouseGoalCardProps = {
 // our current saving pace, the computed date we actually reach the target. When the
 // pace runs past the target it says, honestly, how much more per month would close the
 // gap. The two dates are clearly labeled and never presented as competing plans.
-export function HouseGoalCard({ house, today }: HouseGoalCardProps) {
+export function HouseGoalCard({ house, today, unallocatedMonthly = 0 }: HouseGoalCardProps) {
   const current = house.houseSavings
   const target = house.downPaymentTarget
   const schedule = house.baselineSchedule
   const downReturn = house.downPaymentReturn ?? 0.03
+  const extra = Math.max(0, unallocatedMonthly)
 
   const calc = useMemo(() => {
     const reached = current >= target
@@ -40,8 +52,18 @@ export function HouseGoalCard({ house, today }: HouseGoalCardProps) {
     // building, so the bar grows past the goal and the surplus carries into the wealth
     // projection. We never frame being ahead as a reason to ease off.
     const projected = projectedSavingsWithSchedule(current, schedule, yearsUntil(house.targetDate, today), downReturn, today)
-    return { reached, valid, paceDate, onPace, extraNeeded: extraMonthlyNeeded, projected }
-  }, [current, target, schedule, downReturn, house.targetDate, today])
+    // The work left to do, made concrete: if the unclaimed surplus joined the
+    // transfers every month, when would we get there instead?
+    const sweptMonths =
+      extra > 0.5 && !reached
+        ? monthsToReachWithSchedule(target, current, addToSchedule(schedule, extra), downReturn, today)
+        : Number.POSITIVE_INFINITY
+    const sweptDate =
+      Number.isFinite(sweptMonths) && Number.isFinite(paceMonths) && paceMonths - sweptMonths >= 1
+        ? addMonths(today, sweptMonths)
+        : null
+    return { reached, valid, paceDate, onPace, extraNeeded: extraMonthlyNeeded, projected, sweptDate }
+  }, [current, target, schedule, downReturn, extra, house.targetDate, today])
 
   // Bar segments on a 0..max scale (max grows past the target when projected exceeds it):
   // solid green is what we have, a green tint is what the pace adds toward the goal, and
@@ -129,19 +151,28 @@ export function HouseGoalCard({ house, today }: HouseGoalCardProps) {
         )}
       </svg>
 
-      {calc.valid && projected > current + 1 && (
-        <p className="mt-2 text-caption text-muted">
-          On pace for{' '}
-          <span className="tnum font-semibold text-wealth">
-            {formatCompactScaled(projected, compactScale(projected))}
-          </span>{' '}
-          by {formatDate(house.targetDate, 'month')}.
-        </p>
+      {/* A key for the stacked bar, so its three shades are readable without relying on
+          color alone. Hidden when reached or when the horizon is invalid (the segments are
+          not meaningful there). */}
+      {!calc.reached && calc.valid && (
+        <div className="mt-3 flex flex-col gap-1">
+          <LegendRow color="var(--color-accent)" label="Saved today" amount={current} />
+          <LegendRow
+            color="var(--color-accent)"
+            tint
+            label="On pace to add"
+            amount={Math.max(0, Math.min(projected, target) - current)}
+            plus
+          />
+          {hasExcess && (
+            <LegendRow color="var(--color-wealth)" label="Beyond the goal" amount={Math.max(0, projected - target)} plus />
+          )}
+        </div>
       )}
 
       {calc.reached ? (
         <p className="mt-4 text-callout text-positive-strong">
-          Reached. We have the full down payment, with the Build Wealth portion allocated.
+          Reached. We have the full down payment set aside.
         </p>
       ) : !calc.valid ? (
         <p className="mt-4 text-callout text-ink-2">
@@ -170,8 +201,28 @@ export function HouseGoalCard({ house, today }: HouseGoalCardProps) {
                 {formatCurrency(calc.extraNeeded, { cents: false })}
               </span>{' '}
               more per month.
+              {extra >= calc.extraNeeded - 0.5 && extra > 0.5 && (
+                <> Our unclaimed surplus already covers that; it just has to move.</>
+              )}
             </p>
           ) : null}
+          {/* The work left to do: the surplus our plan has not claimed yet. The pace
+              above counts only the automatic transfers, so this is pure upside. */}
+          {extra > 0.5 && (calc.onPace || !Number.isFinite(calc.extraNeeded)) && (
+            <p className="mt-1 text-callout text-ink-2">
+              About <span className="tnum font-semibold text-accent-strong">{formatCurrency(extra, { cents: false })}</span>{' '}
+              of surplus is still unclaimed each month.
+              {calc.sweptDate ? (
+                <>
+                  {' '}
+                  Save it too and we get there by{' '}
+                  <span className="font-semibold">{formatDate(isoDate(calc.sweptDate), 'month')}</span>.
+                </>
+              ) : (
+                <> Save it too and the cushion beyond the goal grows faster.</>
+              )}
+            </p>
+          )}
         </div>
       )}
 
@@ -183,10 +234,13 @@ export function HouseGoalCard({ house, today }: HouseGoalCardProps) {
       )}
 
       <Explain className="mt-3" label="What does this mean?">
-        This is our house down payment so far: our house savings, our cash, Lisa's savings, and the slice of Build
-        Wealth we have allocated to close the gap. The goal is{' '}
-        <span className="tnum">{formatCurrency(target, { cents: false })}</span>. We are counting the cash toward the
-        house now and will rebuild a cash buffer after we buy, so it does not reduce the total today.
+        This is our house down payment so far: the combined balance of the accounts we count toward the house. The
+        goal is <span className="tnum">{formatCurrency(target, { cents: false })}</span>. The pace counts only our
+        automatic monthly transfers (House Savings), so it is a floor we can trust: any extra we sweep in moves the
+        date up, never the other way. We count our cash toward the house now and will rebuild a cash buffer after we
+        buy. The bucket is assumed to grow at{' '}
+        <span className="tnum">{Math.round(downReturn * 1000) / 10}</span> percent a year, kept de-risked for the
+        purchase.
       </Explain>
     </div>
   )
@@ -197,6 +251,39 @@ function Line({ label, value }: { label: string; value: string }) {
     <div className="flex items-baseline justify-between gap-3 text-callout">
       <span className="text-muted">{label}</span>
       <span className="tnum text-right text-ink">{value}</span>
+    </div>
+  )
+}
+
+// One legend row for the stacked projection bar: a color swatch, a plain-language label
+// (which carries the meaning, so color is never the only signal), and its amount.
+function LegendRow({
+  color,
+  tint = false,
+  label,
+  amount,
+  plus = false,
+}: {
+  color: string
+  tint?: boolean
+  label: string
+  amount: number
+  plus?: boolean
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-caption">
+      <span className="flex items-center gap-1.5 text-muted">
+        <span
+          className="inline-block h-2 w-2 shrink-0 rounded-full"
+          style={{ backgroundColor: color, opacity: tint ? 0.4 : 1 }}
+          aria-hidden="true"
+        />
+        {label}
+      </span>
+      <span className="tnum text-ink-2">
+        {plus ? '+' : ''}
+        {formatCurrency(amount, { cents: false })}
+      </span>
     </div>
   )
 }

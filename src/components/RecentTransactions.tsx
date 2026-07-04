@@ -4,29 +4,33 @@ import { Sheet } from './Sheet'
 import { Field } from './Field'
 import { Button } from './Button'
 import { CategoryChip } from './CategoryChip'
-import { Spinner } from './Spinner'
 import { HomeIcon } from './icons/nav'
-import { SparkleIcon } from './icons/ui'
 import { resolveCategoryIcon } from '../config/icons'
-import { capitalizeFirst, clampToCents, formatCurrency, formatDate, sanitizeAmount, titleCase } from '../lib/format'
+import { capitalizeFirst, clampToCents, formatCurrency, formatDate, groupAmount, parseAmount } from '../lib/format'
+import { titleCase } from '../lib/format'
+import { isCountedSpend } from '../lib/budget'
 import { todayISO } from '../lib/summary'
 import { cn } from '../lib/cn'
-import { findSavings, type SavingsIdea } from '../services/savings'
-import { buildTrendContext } from '../lib/trends'
 import type { Category, Transaction } from '../types'
 
-// A recurring-looking expense (a subscription, a membership, an explicitly monthly
-// charge) is asked about as a monthly cost, so the savings ideas quantify its real
-// ongoing weight instead of treating it as a single purchase.
-const RECURRING_HINT = /subscription|membership|monthly/i
-
 type TxPatch = { amount?: number; categoryId?: string; date?: string; note?: string }
+
+// The quiet label for a special ledger row, so a one-off payment reads as the record
+// it is rather than ordinary spending.
+function kindLabel(tx: Transaction): string | null {
+  if (tx.kind === 'billPayment') return 'paid in full'
+  if (tx.kind === 'packagePurchase') return 'prepaid package'
+  if (tx.kind === 'packageSession') return 'package session'
+  return null
+}
 
 export type RecentTransactionsProps = {
   transactions: Transaction[]
   categories: Category[]
-  onUpdate: (id: string, patch: TxPatch) => void
-  onDelete: (id: string) => void
+  // Mutations take the full previous transaction so a savings entry's balance credit
+  // is adjusted or reversed exactly (see services/transactions.ts).
+  onUpdate: (tx: Transaction, patch: TxPatch) => void
+  onDelete: (tx: Transaction) => void
   // When true, each discretionary (variable) expense shows the home it gave up: this
   // dollar was already headed for the house, so the ledger makes the tradeoff plain.
   // Calm and honest, never shaming.
@@ -42,9 +46,6 @@ export function RecentTransactions({
 }: RecentTransactionsProps) {
   const [editing, setEditing] = useState<Transaction | null>(null)
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
-  // A one-line summary of what the household actually buys, so the opt-in savings finder
-  // in the edit sheet gives personalized ideas instead of generic tips.
-  const trendContext = useMemo(() => buildTrendContext(transactions, categories), [transactions, categories])
 
   return (
     <>
@@ -73,8 +74,12 @@ export function RecentTransactions({
                   </span>
                   <span className="block text-caption text-muted">
                     {titleCase(category?.name ?? 'Other')}, {formatDate(tx.date, 'short')}
+                    {/* Who logged it, from the signed-in account at log time, so the
+                        ledger reads by person at a glance. */}
+                    {tx.createdBy && <>, {tx.createdBy}</>}
+                    {kindLabel(tx) && <>, {kindLabel(tx)}</>}
                   </span>
-                  {showHouseGivenUp && category?.type === 'variable' && (
+                  {showHouseGivenUp && category?.type === 'variable' && isCountedSpend(tx) && (
                     <span className="mt-0.5 flex items-center gap-1 text-caption text-muted">
                       <HomeIcon size={11} />
                       <span className="tnum">{formatCurrency(tx.amount, { cents: false })}</span> less toward our home
@@ -92,7 +97,6 @@ export function RecentTransactions({
         <EditSheet
           tx={editing}
           categories={categories}
-          trendContext={trendContext}
           onClose={() => setEditing(null)}
           onUpdate={onUpdate}
           onDelete={onDelete}
@@ -105,63 +109,46 @@ export function RecentTransactions({
 function EditSheet({
   tx,
   categories,
-  trendContext,
   onClose,
   onUpdate,
   onDelete,
 }: {
   tx: Transaction
   categories: Category[]
-  trendContext: string
   onClose: () => void
-  onUpdate: (id: string, patch: TxPatch) => void
-  onDelete: (id: string) => void
+  onUpdate: (tx: Transaction, patch: TxPatch) => void
+  onDelete: (tx: Transaction) => void
 }) {
-  const [amount, setAmount] = useState(String(tx.amount))
+  const [amount, setAmount] = useState(groupAmount(String(tx.amount)))
   const [categoryId, setCategoryId] = useState(tx.categoryId)
   const [date, setDate] = useState(tx.date)
   const [note, setNote] = useState(tx.note ?? '')
-  const [savingsState, setSavingsState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
-  const [ideas, setIdeas] = useState<SavingsIdea[]>([])
-  const [savingsError, setSavingsError] = useState('')
 
-  const amountValue = Number.parseFloat(amount)
-  const canSave = Number.isFinite(amountValue) && amountValue > 0 && categoryId.length > 0
-  const categoryName = categories.find((c) => c.id === categoryId)?.name ?? 'Other'
+  // A special row (a paid-in-full payment, a package purchase or session) keeps its
+  // amount and category: those are records tied to a bill or package, and editing
+  // them here would break the exactly-once accounting. Date and note stay editable,
+  // and deleting reverses everything (a deleted session goes back to the package).
+  const locked = tx.kind != null
+
+  // An expense cannot be edited INTO a savings category here: a savings entry needs a
+  // credit destination that only the Quick Add savings flow sets. Moving one OUT of
+  // savings works (the credit is reversed), so a savings entry keeps its own chip.
+  const editable = categories.filter((c) => c.type !== 'savings' || c.id === tx.categoryId)
+
+  const amountValue = parseAmount(amount)
+  const canSave = locked || (Number.isFinite(amountValue) && amountValue > 0 && categoryId.length > 0)
 
   function handleSave() {
     if (!canSave) return
     // Clamp to cents on save, matching every other money write path, so an edit never
-    // persists a sub-cent amount to Firestore.
-    onUpdate(tx.id, { amount: clampToCents(amountValue), categoryId, date, note: capitalizeFirst(note) })
+    // persists a sub-cent amount to Firestore. The note is written only when it holds
+    // text or is being cleared, so a transaction never gains an empty note field.
+    const trimmed = note.trim()
+    const patch: TxPatch = locked ? { date } : { amount: clampToCents(amountValue), categoryId, date }
+    if (trimmed) patch.note = capitalizeFirst(trimmed)
+    else if (tx.note) patch.note = ''
+    onUpdate(tx, patch)
     onClose()
-  }
-
-  // Ask Grok for cheaper, similar, or creative ways to save on this expense.
-  async function handleFindSavings() {
-    setSavingsState('loading')
-    setSavingsError('')
-    try {
-      const result = await findSavings({
-        target: {
-          name: note.trim() || titleCase(categoryName),
-          category: titleCase(categoryName),
-          amount: Number.isFinite(amountValue) && amountValue > 0 ? amountValue : tx.amount,
-          cadence: RECURRING_HINT.test(`${note} ${categoryName}`) ? 'monthly' : 'once',
-        },
-        ...(trendContext ? { context: trendContext } : {}),
-      })
-      setIdeas(result)
-      setSavingsState('done')
-    } catch (err) {
-      const code = (err as { code?: string }).code ?? ''
-      setSavingsError(
-        code.includes('failed-precondition')
-          ? 'The savings finder is not set up yet. Add the xAI key to enable it.'
-          : 'Could not find savings right now. Try again.',
-      )
-      setSavingsState('error')
-    }
   }
 
   return (
@@ -171,7 +158,13 @@ function EditSheet({
       title="Edit expense"
       footer={
         <div className="flex gap-3">
-          <Button variant="destructive" onClick={() => onDelete(tx.id)}>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              onDelete(tx)
+              onClose()
+            }}
+          >
             Delete
           </Button>
           <Button fullWidth disabled={!canSave} onClick={handleSave}>
@@ -181,25 +174,40 @@ function EditSheet({
       }
     >
       <div className="flex flex-col gap-4">
-        <Field
-          label="Amount"
-          inputMode="decimal"
-          numeric
-          value={amount}
-          onChange={(event) => setAmount(sanitizeAmount(event.target.value))}
-        />
-        <div className={cn('no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1')}>
-          {categories.map((category) => (
-            <CategoryChip
-              key={category.id}
-              name={category.name}
-              color={category.color}
-              icon={category.icon}
-              selected={categoryId === category.id}
-              onSelect={() => setCategoryId(category.id)}
+        {locked ? (
+          <div className="rounded-lg bg-surface-2 p-4">
+            <p className="text-callout text-ink">
+              <span className="tnum font-semibold">{formatCurrency(tx.amount)}</span>, {kindLabel(tx)}
+            </p>
+            <p className="mt-1 text-caption text-muted">
+              {tx.kind === 'packageSession'
+                ? 'This session drew down its package. Deleting it puts the session back.'
+                : 'This is the record of a one-time payment. The budget already spreads it, so its amount and category stay fixed here; edit the source under Bills.'}
+            </p>
+          </div>
+        ) : (
+          <>
+            <Field
+              label="Amount"
+              inputMode="decimal"
+              numeric
+              value={amount}
+              onChange={(event) => setAmount(groupAmount(event.target.value))}
             />
-          ))}
-        </div>
+            <div className={cn('no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1')}>
+              {editable.map((category) => (
+                <CategoryChip
+                  key={category.id}
+                  name={category.name}
+                  color={category.color}
+                  icon={category.icon}
+                  selected={categoryId === category.id}
+                  onSelect={() => setCategoryId(category.id)}
+                />
+              ))}
+            </div>
+          </>
+        )}
         <Field
           label="Date"
           type="date"
@@ -214,47 +222,6 @@ function EditSheet({
           value={note}
           onChange={(event) => setNote(event.target.value)}
         />
-
-        <div className="flex flex-col gap-2 border-t border-line pt-4">
-          <button
-            type="button"
-            onClick={handleFindSavings}
-            disabled={savingsState === 'loading'}
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-pill border border-line bg-surface px-4 text-callout font-medium text-accent-strong transition active:scale-[0.98] motion-reduce:active:scale-100 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-60"
-          >
-            {savingsState === 'loading' ? (
-              <Spinner size={18} label="Finding ways to save" />
-            ) : (
-              <SparkleIcon size={18} strokeWidth={2} aria-hidden="true" />
-            )}
-            {savingsState === 'loading' ? 'Finding ways to save' : 'Find ways to save'}
-          </button>
-          {savingsState === 'error' && (
-            <p role="alert" className="text-caption text-danger">
-              {savingsError}
-            </p>
-          )}
-          {savingsState === 'done' && ideas.length === 0 && (
-            <p className="text-caption text-muted">No clear savings on this one.</p>
-          )}
-          {savingsState === 'done' && ideas.length > 0 && (
-            <ul className="flex flex-col gap-2">
-              {ideas.map((idea, index) => (
-                <li key={index} className="rounded-lg bg-surface-2 p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="text-callout font-medium text-ink">{idea.title}</span>
-                    {idea.estMonthly > 0 && (
-                      <span className="tnum shrink-0 rounded-pill bg-positive/12 px-2 py-0.5 text-caption font-semibold text-positive-strong">
-                        {formatCurrency(idea.estMonthly, { cents: false })}/mo
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-1 text-caption leading-relaxed text-ink-2">{idea.detail}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
       </div>
     </Sheet>
   )

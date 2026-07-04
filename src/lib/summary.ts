@@ -1,12 +1,54 @@
 // Small pure helpers for the Home glance: date windows, monthly income, and the
 // member label. Finance formulas live in lib/money.ts; these are aggregations.
 
-import type { CategoryType, FixedExpense, Income, MemberName } from '../types'
+import type { BillOwner, CategoryType, FixedExpense, Income, MemberName } from '../types'
 
-// The household speaks of discretionary spend, not "variable". The stored type
-// value stays the same; only the label the couple sees changes.
+// The three options for a bill's owner, shared by the bill editor and the owner toggle.
+export const BILL_OWNER_OPTIONS: Array<{ value: BillOwner; label: string }> = [
+  { value: 'Sal', label: 'Sal' },
+  { value: 'Lisa', label: 'Lisa' },
+  { value: 'Both', label: 'Both' },
+]
+
+// Whether a bill belongs in a person's scoped view: everything in the combined view
+// (person is null), and in a person view their own bills plus anything shared (Both),
+// so a shared cost like rent shows for each of us, never for only one.
+export function billMatchesOwner(owner: BillOwner, person: MemberName | null): boolean {
+  return person == null || owner === person || owner === 'Both'
+}
+
+// A short label for a bill owner, for the owner chip on a budget row.
+export function ownerLabel(owner: BillOwner): string {
+  return owner === 'Both' ? 'Shared' : owner
+}
+
+// Order the categories for the Home tap-to-log grid: the common everyday and savings
+// categories first (in their configured order), then the bill categories, so the ones
+// tapped most often lead and bills are a swipe away. Every category is loggable now,
+// including bills, so an actual charge can be logged against a bill to compare it with
+// the planned amount.
+export function homeCategoryOrder<T extends { type: CategoryType }>(categories: T[]): T[] {
+  return [...categories.filter((c) => c.type !== 'fixed'), ...categories.filter((c) => c.type === 'fixed')]
+}
+
+// A short, plain-language name for each category behavior. The stored type value stays
+// the same ('variable'); only the label the couple sees changes.
 export function categoryTypeLabel(type: CategoryType): string {
-  return type === 'fixed' ? 'Fixed' : type === 'savings' ? 'Savings' : 'Discretionary'
+  return type === 'fixed' ? 'Bill' : type === 'savings' ? 'Savings' : 'Everyday'
+}
+
+// One line explaining what a behavior means, so the choice is never a guess. Used under
+// the type control when adding or editing. Every category can be tapped to log on Home;
+// the behavior only decides how the money is counted.
+export function categoryTypeHint(type: CategoryType): string {
+  switch (type) {
+    case 'fixed':
+      return 'A recurring bill. Its planned amount comes from the bills you add. Tap it on Home to log an actual charge and compare it with the plan.'
+    case 'savings':
+      return 'Money set aside. Tapping it on Home adds to your goal instead of counting as spending.'
+    default:
+      return 'Day-to-day spending. Tap it on Home to log, and it counts toward your monthly budget.'
+  }
 }
 
 export function isoDate(date: Date): string {
@@ -109,8 +151,41 @@ export function nextIncomeStart(incomes: Income[], date: Date): Date | null {
   return next
 }
 
-export function sumAmounts(items: Array<{ amount: number }>): number {
-  return items.reduce((sum, item) => sum + item.amount, 0)
+// The local "YYYY-MM" key for a date, and month-string arithmetic for the coverage
+// window math below. Month strings compare correctly as strings, matching the
+// month-granular convention billActiveOn established.
+export function monthKey(date: Date): string {
+  return isoDate(date).slice(0, 7)
+}
+
+function parseMonthKey(value: string): { year: number; month: number } | null {
+  const match = /^(\d{4})-(\d{2})/.exec(value)
+  if (!match) return null
+  return { year: Number(match[1]), month: Number(match[2]) }
+}
+
+// Add whole months to a "YYYY-MM" key. addToMonthKey("2026-11", 2) is "2027-01".
+export function addToMonthKey(key: string, months: number): string {
+  const parsed = parseMonthKey(key)
+  if (!parsed) return key
+  const total = parsed.year * 12 + (parsed.month - 1) + months
+  const year = Math.floor(total / 12)
+  const month = (total % 12) + 1
+  return `${year}-${String(month).padStart(2, '0')}`
+}
+
+type BillTiming = Pick<FixedExpense, 'endDate' | 'cadence' | 'coverageStart' | 'coverageMonths'>
+
+// True when a paid-in-full bill has a usable coverage window.
+function hasCoverage(bill: BillTiming): bill is BillTiming & { coverageStart: string; coverageMonths: number } {
+  return (
+    bill.cadence === 'paidInFull' &&
+    typeof bill.coverageStart === 'string' &&
+    parseMonthKey(bill.coverageStart) != null &&
+    typeof bill.coverageMonths === 'number' &&
+    Number.isFinite(bill.coverageMonths) &&
+    bill.coverageMonths >= 1
+  )
 }
 
 // True when a bill is still running on the given date: no end date means ongoing, and
@@ -119,12 +194,73 @@ export function sumAmounts(items: Array<{ amount: number }>): number {
 // store the first of that month, so comparing by day would silently drop a bill for
 // essentially all of its final month. Compared as local year-month strings, matching
 // isoDate above, so a timezone offset never ends a bill a month early or late. An
-// unparseable end is treated as ongoing.
-export function billActiveOn(bill: Pick<FixedExpense, 'endDate'>, date: Date): boolean {
+// unparseable end is treated as ongoing. A paid-in-full bill is active exactly inside
+// its coverage window (never charged monthly outside it); before the window starts it
+// is upcoming, after the last covered month it is ended.
+export function billActiveOn(bill: BillTiming, date: Date): boolean {
+  const month = monthKey(date)
+  if (hasCoverage(bill)) {
+    // The window alone decides: an endDate has no meaning beside a coverage
+    // window (BillSheet clears it), and honoring a stray one would silently
+    // truncate the spread and undercount the money actually paid.
+    const last = addToMonthKey(bill.coverageStart, bill.coverageMonths - 1)
+    return month >= bill.coverageStart && month <= last
+  }
   if (!bill.endDate) return true
-  const match = /^(\d{4})-(\d{2})/.exec(bill.endDate)
-  if (!match) return true
-  return isoDate(date).slice(0, 7) <= `${match[1]}-${match[2]}`
+  const end = parseMonthKey(bill.endDate)
+  if (!end) return true
+  return month <= `${end.year}-${String(end.month).padStart(2, '0')}`
+}
+
+type BillAmount = Pick<FixedExpense, 'amount' | 'cadence' | 'coverageStart' | 'coverageMonths'>
+
+// What a bill costs per month while it is active. A monthly bill is its amount; a
+// paid-in-full bill spreads its one-time price evenly across the covered months, so
+// the budget charges the spread and never the full price on top of it.
+export function billMonthlyAmount(bill: BillAmount): number {
+  if (hasCoverage(bill)) return bill.amount / bill.coverageMonths
+  return bill.amount
+}
+
+export interface BillCoverage {
+  // First and last covered month as "YYYY-MM".
+  startMonth: string
+  endMonth: string
+  monthsTotal: number
+  // Covered months from the current month through the end, zero once past.
+  monthsLeft: number
+  // The unconsumed value: the monthly spread times the months left.
+  remainingValue: number
+}
+
+// The coverage window of a paid-in-full bill, for the "covers X to Y, N months left"
+// line. Null for monthly bills and for paid-in-full bills missing their window.
+export function billCoverage(bill: BillAmount & BillTiming, today: Date): BillCoverage | null {
+  if (!hasCoverage(bill)) return null
+  const startMonth = bill.coverageStart
+  const endMonth = addToMonthKey(startMonth, bill.coverageMonths - 1)
+  const month = monthKey(today)
+  const monthsLeft =
+    month > endMonth
+      ? 0
+      : month < startMonth
+        ? bill.coverageMonths
+        : monthsBetweenKeys(month, endMonth) + 1
+  return {
+    startMonth,
+    endMonth,
+    monthsTotal: bill.coverageMonths,
+    monthsLeft,
+    remainingValue: billMonthlyAmount(bill) * monthsLeft,
+  }
+}
+
+// Whole months from one "YYYY-MM" key to another (later minus earlier).
+function monthsBetweenKeys(from: string, to: string): number {
+  const a = parseMonthKey(from)
+  const b = parseMonthKey(to)
+  if (!a || !b) return 0
+  return (b.year - a.year) * 12 + (b.month - a.month)
 }
 
 // The owner field is informational only (the app is shared). Best-effort label

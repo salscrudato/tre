@@ -1,4 +1,4 @@
-import { deleteField } from 'firebase/firestore'
+import { deleteField, orderBy } from 'firebase/firestore'
 import type { Income } from '../types'
 import { createInCol, listCol, removeFromCol, updateInCol } from './firestore'
 
@@ -9,7 +9,9 @@ const NAME = 'incomes'
 export type IncomeWrite = Omit<Income, 'id' | 'startMonth'> & { startMonth?: string | null }
 export type IncomePatch = Partial<Omit<Income, 'id' | 'startMonth'>> & { startMonth?: string | null }
 
-export const listIncomes = () => listCol<Income>(NAME)
+// Ordered by name (always present) so the list renders in a stable, meaningful order
+// rather than document-id order.
+export const listIncomes = () => listCol<Income>(NAME, orderBy('name'))
 
 export const createIncome = (data: IncomeWrite) => {
   const clean: Record<string, unknown> = { ...data }

@@ -24,6 +24,14 @@ if ('serviceWorker' in navigator) {
   // A hard reload mid-interaction would wipe a half-typed Quick Add entry or slam a
   // sheet shut. If the user is typing or a dialog is open when the new worker takes
   // over, hold the refresh until the app is next backgrounded; it comes back fresh.
+  // Fires the deferred refresh the next time the app is backgrounded. A single stable
+  // handler that removes itself once it reloads: re-adding the same function is a
+  // no-op, so repeated controllerchange events never stack listeners.
+  const reloadWhenHidden = () => {
+    if (document.visibilityState !== 'hidden') return
+    document.removeEventListener('visibilitychange', reloadWhenHidden)
+    reload()
+  }
   const midInteraction = () => {
     const el = document.activeElement
     const typing =
@@ -46,9 +54,7 @@ if ('serviceWorker' in navigator) {
       reload()
       return
     }
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') reload()
-    })
+    document.addEventListener('visibilitychange', reloadWhenHidden)
     window.addEventListener('pagehide', reload, { once: true })
   })
 }

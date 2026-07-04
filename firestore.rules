@@ -87,5 +87,13 @@ service cloud.firestore {
     match /plaidItems/{hid} {
       allow read, write: if false;
     }
+
+    // The resolveProduct URL cache (product names and page prices, no secrets and no
+    // household data). Maintained only by the Cloud Function through the Admin SDK;
+    // no client ever reads or writes it. Unmatched paths are denied by default; this
+    // match just makes the intent explicit.
+    match /productCache/{entry} {
+      allow read, write: if false;
+    }
   }
 }

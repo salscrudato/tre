@@ -85,7 +85,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signOut = useCallback(async () => {
-    await firebaseSignOut(auth)
+    // Callers fire-and-forget this, so catch here: a failed sign-out should say so
+    // rather than reject unhandled with no feedback.
+    try {
+      await firebaseSignOut(auth)
+    } catch {
+      setError('Could not sign out. Check your connection and try again.')
+    }
   }, [])
 
   const clearError = useCallback(() => setError(null), [])

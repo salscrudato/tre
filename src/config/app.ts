@@ -1,9 +1,11 @@
 // App-wide constants and projection defaults for Tre.
 // Renaming the app is a one-line change here (see CLAUDE.md).
 //
-// DEFAULTS mirror the household settings in seed/seed-data.json and feed every
-// projection until a live household document overrides them at runtime. Keep the
-// two in sync. Money values are whole dollars; rates are decimals (0.07 = 7 percent).
+// DEFAULTS are the first-run household settings: src/services/bootstrap.ts seeds
+// them verbatim alongside the canonical seed data in src/config/seed.ts, and they
+// feed every projection until the live household document overrides them at runtime.
+// Keep the two files in sync. Money values are whole dollars; rates are decimals
+// (0.07 = 7 percent).
 
 export const APP_NAME = 'Tre'
 

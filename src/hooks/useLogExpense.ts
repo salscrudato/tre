@@ -1,46 +1,50 @@
 // The one place that logs an expense, shared by the Home Quick Add and the Quick Log
 // button that floats on every other screen. Writing the transaction is optimistic
-// (handled in useTransactions); a savings entry also lifts its bucket so the house
-// meter moves the instant it is logged. The credit is an atomic increment, so two
-// concurrent logs never lose each other.
+// (handled in useTransactions); a savings entry carries its credit destination on the
+// document, and the service writes the transaction and the balance bump in ONE batch,
+// so the house meter moves the instant it is logged and can never drift from the
+// ledger. Deleting or editing the entry later reverses the credit exactly.
 
 import { useAuth } from '../context/auth-context'
 import { useAccounts, primaryHouseAccountId } from './useAccounts'
-import { useGoals } from './useGoals'
 import { useTransactions } from './useTransactions'
 import { memberFromUser } from '../lib/summary'
 import type { QuickAddInput } from '../components/QuickAdd'
 import type { HouseContext } from '../lib/house'
+import type { TransactionInput } from '../services/transactions'
+import type { Transaction } from '../types'
 
 export function useLogExpense() {
   const { user } = useAuth()
-  const { accounts, credit: accountCredit } = useAccounts()
-  const { credit: goalCredit } = useGoals()
-  // The add mutation is independent of the filter; the query key is shared, so this
-  // does not open a second subscription beyond the one a screen already holds.
-  const tx = useTransactions({ max: 5 })
+  const { accounts } = useAccounts()
+  // {max: 50} matches the key Home and the log sheet already subscribe, so this adds
+  // no extra Firestore read; only the shared add mutation is used here.
+  const tx = useTransactions({ max: 50 })
   const createdBy = memberFromUser(user)
 
-  async function logExpense(input: QuickAddInput, house: HouseContext | null): Promise<void> {
-    await tx.add.mutateAsync({
+  async function logExpense(input: QuickAddInput, house: HouseContext | null): Promise<Transaction> {
+    // When the house savings live in flagged accounts, the contribution lands on the
+    // house account so the account-derived meter actually moves; other goals lift
+    // their stored balance directly.
+    const houseAccountId =
+      input.goalId && house?.fromAccounts && input.goalId === house.houseGoal.id
+        ? primaryHouseAccountId(accounts)
+        : null
+    const txInput: TransactionInput = {
       amount: input.amount,
       categoryId: input.categoryId,
       date: input.date,
       createdBy,
       ...(input.note ? { note: input.note } : {}),
-    })
-    if (input.goalId) {
-      // When the house savings live in flagged accounts, the contribution lands on the
-      // house account so the account-derived meter actually moves; other goals lift
-      // their stored balance directly.
-      const houseAccountId =
-        house?.fromAccounts && input.goalId === house.houseGoal.id ? primaryHouseAccountId(accounts) : null
-      if (houseAccountId) {
-        await accountCredit.mutateAsync({ id: houseAccountId, delta: input.amount })
-      } else {
-        await goalCredit.mutateAsync({ id: input.goalId, delta: input.amount })
-      }
+      ...(input.goalId ? (houseAccountId ? { accountId: houseAccountId } : { goalId: input.goalId }) : {}),
+      // A package session carries its package so the drawdown happens in the same
+      // batch as the ledger row (see services/transactions.ts).
+      ...(input.kind && input.packageId ? { kind: input.kind, packageId: input.packageId } : {}),
     }
+    // mutateAsync resolves to the real document id, so the returned row is immediately
+    // editable and can be reversed by a one-tap Undo on the confirmation.
+    const id = await tx.add.mutateAsync(txInput)
+    return { id, ...txInput }
   }
 
   return { logExpense, createdBy }

@@ -10,7 +10,7 @@ export function Toaster() {
   useEffect(() => subscribeToasts(setToasts), [])
 
   return createPortal(
-    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+84px)] z-[60] flex flex-col items-center gap-2 px-4">
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+20px)] z-[60] flex flex-col items-center gap-2 px-4">
       {toasts.map((toast) => (
         <ToastItem key={toast.id} toast={toast} />
       ))}

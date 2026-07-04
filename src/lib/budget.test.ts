@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildBudgetView, leftToSaveMonthly, savingsRateMonthly } from './budget'
+import { buildBudgetView, savingsRateMonthly } from './budget'
 import type { Category, FixedExpense, Transaction } from '../types'
 
 const cat = (id: string, name: string, type: Category['type']): Category => ({
@@ -55,9 +55,10 @@ describe('buildBudgetView', () => {
     expect(housing?.committedMonthly).toBe(4050)
   })
 
-  it('groups categories by type and never mixes them', () => {
+  it('groups categories by type and sorts rows biggest money first', () => {
     expect(view.fixed.rows.map((r) => r.category.id)).toEqual(['cat_housing', 'cat_utilities'])
-    expect(view.discretionary.rows.map((r) => r.category.id)).toEqual(['cat_dining', 'cat_groceries'])
+    // Groceries (84.20 spent) leads Dining (52 spent): highest amount first, always.
+    expect(view.discretionary.rows.map((r) => r.category.id)).toEqual(['cat_groceries', 'cat_dining'])
     expect(view.savings.rows.map((r) => r.category.id)).toEqual(['cat_savings'])
   })
 
@@ -120,14 +121,6 @@ describe('buildBudgetView', () => {
   })
 })
 
-describe('leftToSaveMonthly', () => {
-  it('is income minus committed fixed minus the discretionary plan', () => {
-    expect(
-      leftToSaveMonthly({ monthlyIncome: 17200, committedFixedMonthly: 7361, discretionaryBudgetMonthly: 2500 }),
-    ).toBeCloseTo(7339, 2)
-  })
-})
-
 describe('savingsRateMonthly', () => {
   it('subtracts committed non-savings bills and logged non-savings spend, not savings', () => {
     // income 10000, committed non-savings 4250 (rent 4050 + PSEG 200), logged 136.20.
@@ -147,6 +140,25 @@ describe('savingsRateMonthly', () => {
     expect(savingsRateMonthly(0, fixed, categories, monthTx)).toBe(0)
   })
 
+  it('does not double-count a bill when its actual charge is logged into its fixed category', () => {
+    // Logging the actual rent charge (4050) into Housing must not subtract it again: the
+    // committed bill already accounts for it, so the rate stays at "committed only".
+    const rentLog = [tx('rent', 4050, 'cat_housing', '2026-07-01')]
+    expect(savingsRateMonthly(10000, fixed, categories, rentLog)).toBeCloseTo((10000 - 4250) / 10000, 4)
+  })
+
+  it('counts only the excess when a fixed-category charge runs over its plan', () => {
+    // Rent came in 450 over the 4050 plan: only the 450 excess lowers the rate.
+    const rentLog = [tx('rent', 4500, 'cat_housing', '2026-07-01')]
+    expect(savingsRateMonthly(10000, fixed, categories, rentLog)).toBeCloseTo((10000 - 4250 - 450) / 10000, 4)
+  })
+
+  it('counts a fixed-category charge in full when no active bill covers it', () => {
+    // No bills at all: a charge in a fixed category still lowers the rate by its amount.
+    const rate = savingsRateMonthly(10000, [], categories, [tx('x', 300, 'cat_housing', '2026-07-01')])
+    expect(rate).toBeCloseTo((10000 - 300) / 10000, 4)
+  })
+
   it('excludes a bill past its end date from the committed costs', () => {
     const today = new Date(2026, 6, 10)
     const withEnded: FixedExpense[] = [
@@ -157,5 +169,90 @@ describe('savingsRateMonthly', () => {
       savingsRateMonthly(10000, fixed, categories, monthTx, today),
       6,
     )
+  })
+})
+
+// A paid-in-full bill: one real outflow, spread across its covered months, never
+// charged monthly on top. The Geico case: 1440 covering twelve months.
+describe('paid-in-full bills', () => {
+  const geico: FixedExpense = {
+    id: 'fx_geico',
+    name: 'Geico',
+    amount: 1440,
+    categoryId: 'cat_utilities',
+    dueDay: 1,
+    owner: 'Sal',
+    active: true,
+    cadence: 'paidInFull',
+    coverageStart: '2026-01',
+    coverageMonths: 12,
+  }
+  const bills = [...fixed, geico]
+  const inWindow = new Date(2026, 6, 10)
+  const pastWindow = new Date(2027, 1, 10)
+
+  it('charges the monthly spread inside the coverage window, not the full price', () => {
+    const view = buildBudgetView(categories, bills, byCategoryId, monthTx, yearTx, inWindow)
+    const utils = view.fixed.rows.find((r) => r.category.id === 'cat_utilities')
+    expect(utils?.committedMonthly).toBeCloseTo(200 + 1440 / 12, 6)
+    expect(view.committedFixedMonthly).toBeCloseTo(4250 + 120, 6)
+  })
+
+  it('charges nothing outside the coverage window', () => {
+    const view = buildBudgetView(categories, bills, byCategoryId, monthTx, yearTx, pastWindow)
+    expect(view.committedFixedMonthly).toBe(4250)
+  })
+
+  it('the payment ledger row never counts as spent (the spread already does)', () => {
+    const payment: Transaction = {
+      ...tx('tp', 1440, 'cat_utilities', '2026-07-02'),
+      kind: 'billPayment',
+      billId: 'fx_geico',
+    }
+    const view = buildBudgetView(categories, bills, byCategoryId, [...monthTx, payment], [...yearTx, payment], inWindow)
+    expect(view.monthSpent).toBeCloseTo(136.2, 2)
+    const utils = view.fixed.rows.find((r) => r.category.id === 'cat_utilities')
+    expect(utils?.monthSpent).toBe(0)
+  })
+
+  it('the payment row does not move the savings rate either', () => {
+    const payment: Transaction = {
+      ...tx('tp', 1440, 'cat_utilities', '2026-07-02'),
+      kind: 'billPayment',
+      billId: 'fx_geico',
+    }
+    expect(savingsRateMonthly(10000, bills, categories, [...monthTx, payment], inWindow)).toBeCloseTo(
+      savingsRateMonthly(10000, bills, categories, monthTx, inWindow),
+      6,
+    )
+  })
+})
+
+// A prepaid package: the purchase row is excluded from spent (its money is recognized
+// per session), and each session row counts at the per-session cost.
+describe('prepaid package rows', () => {
+  const purchase: Transaction = {
+    ...tx('pkg1', 300, 'cat_dining', '2026-07-01'),
+    kind: 'packagePurchase',
+    packageId: 'pk_wax',
+  }
+  const session: Transaction = {
+    ...tx('pkg2', 50, 'cat_dining', '2026-07-06'),
+    kind: 'packageSession',
+    packageId: 'pk_wax',
+  }
+
+  it('counts a session as spent and a purchase as not, so money is counted once', () => {
+    const view = buildBudgetView(categories, fixed, byCategoryId, [...monthTx, purchase, session], [...yearTx, purchase, session])
+    expect(view.monthSpent).toBeCloseTo(136.2 + 50, 2)
+    const dining = view.discretionary.rows.find((r) => r.category.id === 'cat_dining')
+    expect(dining?.monthSpent).toBeCloseTo(52 + 50, 2)
+  })
+
+  it('a session lowers the savings rate; the purchase row does not double it', () => {
+    const withBoth = savingsRateMonthly(10000, fixed, categories, [...monthTx, purchase, session])
+    const withSessionOnly = savingsRateMonthly(10000, fixed, categories, [...monthTx, session])
+    expect(withBoth).toBeCloseTo(withSessionOnly, 6)
+    expect(withBoth).toBeLessThan(savingsRateMonthly(10000, fixed, categories, monthTx))
   })
 })

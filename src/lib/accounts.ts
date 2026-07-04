@@ -40,6 +40,9 @@ export function houseSavingsInvestedFromAccounts(accounts: Account[]): number {
 // logged so the meter actually moves. Avoids a partially allocated account (Build
 // Wealth), where a deposit would not lift the counted amount past its cap.
 export function primaryHouseAccountId(accounts: Account[]): string | null {
-  const full = accounts.find((a) => a.countsTowardHouse && a.houseAllocation == null)
-  return (full ?? accounts.find((a) => a.countsTowardHouse))?.id ?? null
+  const flaggedFull = accounts.filter((a) => a.countsTowardHouse && a.houseAllocation == null)
+  // Never credit a Plaid-synced balance: the daily sync overwrites it wholesale and
+  // would silently erase the contribution. Prefer a hand-entered full-balance account.
+  const manual = flaggedFull.find((a) => !a.plaidAccountId)
+  return (manual ?? flaggedFull[0] ?? accounts.find((a) => a.countsTowardHouse))?.id ?? null
 }

@@ -10,8 +10,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "vitest run",
-    "emulators": "firebase emulators:start --only auth,firestore --import=./emulator-data --export-on-exit=./emulator-data",
-    "migrate": "tsx scripts/migrate-2026-07.ts"
+    "emulators": "firebase emulators:start --only auth,firestore --import=./emulator-data --export-on-exit=./emulator-data"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",

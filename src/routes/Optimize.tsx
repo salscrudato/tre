@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertIcon, ChevronLeftIcon, ChevronRightIcon, SparkleIcon } from '../components/icons/ui'
 import { CloseIcon } from '../components/icons/nav'
@@ -14,16 +14,20 @@ import { useToday } from '../hooks/useToday'
 import { useAdvice } from '../hooks/useAdvice'
 import { useAdviceArchive } from '../hooks/useAdviceArchive'
 import { useLogExpense } from '../hooks/useLogExpense'
-import { parseAdvice, type AdviceAction, type AdviceSnapshot } from '../services/advice'
+import {
+  parseArchivedAdvice,
+  resolveAdviceActions,
+  type AdviceSnapshot,
+  type ResolvedAdviceAction,
+} from '../services/advice'
 import type { AdviceArchiveEntry } from '../services/adviceArchive'
 import { futureValueRecurring, horizonIsValid, houseImpactOfMonthly, type HouseImpactInput } from '../lib/money'
-import { houseContext } from '../lib/house'
+import { houseContext, findHouseGoal } from '../lib/house'
 import { householdPlan } from '../lib/plan'
 import { effectiveLever } from '../lib/recurring'
-import { savingsRateMonthly } from '../lib/budget'
-import { buildTrendContext } from '../lib/trends'
-import { formatCurrency, formatDate, titleCase } from '../lib/format'
-import { billActiveOn, monthBounds } from '../lib/summary'
+import { buildBudgetView, savingsRateMonthly } from '../lib/budget'
+import { capitalizeFirst, formatCurrency, formatDate } from '../lib/format'
+import { billActiveOn, billMonthlyAmount, monthBounds, monthKey } from '../lib/summary'
 import { DEFAULTS } from '../config/app'
 import { Card } from '../components/Card'
 import { Button } from '../components/Button'
@@ -31,32 +35,11 @@ import { Field } from '../components/Field'
 import { Money } from '../components/Money'
 import { Sheet } from '../components/Sheet'
 import { Spinner } from '../components/Spinner'
-import { ReceiptSheet } from '../components/ReceiptSheet'
 import { ScanIcon } from '../components/icons/Scan'
 
-// Defense in depth for the protected-category rule: drop any tip that proposes
-// cutting or reducing our home (rent, mortgage), therapy, healthcare, childcare, or
-// insurance coverage. Optimizing how those are paid (shop, switch carrier, refinance,
-// pay in full) uses softer verbs and still passes, so shopping insurance for a better
-// rate at the same coverage is allowed; cutting the coverage itself is not.
-// Both sides are matched on word boundaries so "rent" does not fire inside "current"
-// and the reduction verbs catch their inflections (cut/cutting, reduce/reducing).
-const PROTECTED_RE =
-  /\b(rent|mortgage|housing|therap\w*|counsel\w*|health\s*care|child\s*care|childcare|daycare|insurance|medical|doctor)\b/
-const CUT_RE = /\b(cancel|cut|drop|eliminat|stop|remov|ditch|quit|reduc|paus|skip|trim)\w*/
-function cutsProtected(action: AdviceAction): boolean {
-  const text = `${action.title} ${action.detail}`.toLowerCase()
-  return PROTECTED_RE.test(text) && CUT_RE.test(text)
-}
-
-// Deterministic backstop: a full cut (proposedMonthly 0) of a named non-discretionary
-// bill is never allowed, whatever words the model uses. A downgrade (proposedMonthly
-// above 0, a cheaper option) of a necessity is fine and passes.
-function cutsProtectedBill(action: AdviceAction, protectedNames: string[]): boolean {
-  if (action.proposedMonthly > 0) return false
-  const text = `${action.title} ${action.detail}`.toLowerCase()
-  return protectedNames.some((name) => text.includes(name))
-}
+// Loaded on demand when the couple taps to scan a receipt, keeping the image and capture
+// code out of the Optimize route's chunk.
+const ReceiptSheet = lazy(() => import('../components/ReceiptSheet').then((m) => ({ default: m.ReceiptSheet })))
 
 // One calm state card shared by the resting, cleared, and unreadable states: a quiet
 // glyph over a single line, with generous, uniform negative space so the page never
@@ -72,15 +55,30 @@ function EmptyNote({ icon, children }: { icon: ReactNode; children: ReactNode })
 
 // The long advice wait, narrated. A plain text swap on an interval, no animation, so
 // reduced motion needs no special case. Cleared on unmount when the result lands.
-const ADVICE_STAGES = ['Reading our numbers', 'Comparing bills to market prices', 'Ranking the savings']
+const ADVICE_STAGES = ['Reading our numbers', 'Weighing each bill and budget', 'Ranking the moves']
 
 function AdviceProgress() {
   const [stage, setStage] = useState(0)
+  const [elapsed, setElapsed] = useState(0)
   useEffect(() => {
-    const id = window.setInterval(() => setStage((current) => (current + 1) % ADVICE_STAGES.length), 4000)
-    return () => window.clearInterval(id)
+    // Advance through the stages once and hold the last one. The request runs many
+    // seconds, so a looping narrator would replay "Reading our numbers" and read as stuck.
+    const stageId = window.setInterval(
+      () => setStage((current) => Math.min(current + 1, ADVICE_STAGES.length - 1)),
+      4000,
+    )
+    const tickId = window.setInterval(() => setElapsed((seconds) => seconds + 1), 1000)
+    return () => {
+      window.clearInterval(stageId)
+      window.clearInterval(tickId)
+    }
   }, [])
-  return <span className="text-callout">{ADVICE_STAGES[stage]}</span>
+  return (
+    <span className="text-callout">
+      {ADVICE_STAGES[stage]}
+      {elapsed >= 15 && <span className="text-muted"> (still working, {elapsed}s)</span>}
+    </span>
+  )
 }
 
 export default function Optimize() {
@@ -101,15 +99,9 @@ export default function Optimize() {
   const archive = useAdviceArchive()
   const [viewing, setViewing] = useState<AdviceArchiveEntry | null>(null)
   // The current month as "YYYY-MM": the archive key, so each run is saved under its month.
-  const monthKey = useMemo(
-    () => `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`,
-    [today],
-  )
+  const currentMonthKey = monthKey(today)
 
-  const houseGoalId = useMemo(
-    () => goals.find((g) => g.name.toLowerCase().includes('house'))?.id ?? null,
-    [goals],
-  )
+  const houseGoalId = useMemo(() => findHouseGoal(goals)?.id ?? null, [goals])
   const plan = useMemo(
     () =>
       settings
@@ -125,137 +117,133 @@ export default function Optimize() {
   const horizonValid = house ? horizonIsValid(house.targetDate, today) : false
 
   const { logExpense } = useLogExpense()
-  const trendContext = useMemo(
-    () => buildTrendContext(monthTx.transactions, categories),
-    [monthTx.transactions, categories],
-  )
   const [dismissed, setDismissed] = useState<Set<number>>(new Set())
   const [receiptOpen, setReceiptOpen] = useState(false)
-  // An optional grounded question for the model, and the one the current result actually
-  // answered, so the label above the results always matches what is shown.
+  // An optional grounded question for the model, the one the current result actually
+  // answered, and the snapshot that request was grounded in, so every figure on the
+  // result cards resolves against the exact numbers the model saw.
   const [question, setQuestion] = useState('')
   const [askedQuestion, setAskedQuestion] = useState('')
+  const [usedSnapshot, setUsedSnapshot] = useState<AdviceSnapshot | null>(null)
+
+  // Per-category month view for the snapshot budgets. Spent is logged only; bills are
+  // listed separately in the snapshot, never auto-counted as spending.
+  const view = useMemo(
+    () => buildBudgetView(categories, fixed, byCategoryId, monthTx.transactions, [], today),
+    [categories, fixed, byCategoryId, monthTx.transactions, today],
+  )
 
   const snapshot = useMemo<AdviceSnapshot | null>(() => {
     if (!settings || !plan) return null
-    const income = plan.incomeMonthly
     const nameById = new Map(categories.map((c) => [c.id, c.name]))
     const catById = new Map(categories.map((c) => [c.id, c]))
-    const variableByCat = new Map<string, number>()
-    for (const tx of monthTx.transactions) {
-      variableByCat.set(tx.categoryId, (variableByCat.get(tx.categoryId) ?? 0) + tx.amount)
-    }
-    // Savings rate from the one shared definition, so this matches the Spending tab exactly.
-    const savingsRate = savingsRateMonthly(income, fixed, categories, monthTx.transactions)
+    const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
+    const dayOfMonth = today.getDate()
+    const round2 = (value: number) => Math.round(value * 100) / 100
+
+    const budgets = [...view.fixed.rows, ...view.discretionary.rows, ...view.savings.rows].map((row) => {
+      const paceLogged = dayOfMonth > 0 ? (row.monthSpent * daysInMonth) / dayOfMonth : row.monthSpent
+      return {
+        category: row.category.name,
+        type: row.category.type,
+        plannedMonthly: round2(row.monthBudget),
+        spentThisMonth: round2(row.monthSpent),
+        // The documented contract (services/advice.ts): committed recurring bills in
+        // the category plus the month-end projection of the logged spend.
+        monthPace: round2(row.committedMonthly + paceLogged),
+      }
+    })
 
     return {
-      incomeMonthlyNet: Math.round(income),
-      savingsRate,
-      // The honest monthly amount free for the house, reconciled with every screen.
-      surplusMonthly: Math.round(plan.availableForHouseMonthly),
-      discretionaryMonthlyBudget: plan.discretionaryBudgetMonthly,
-      budgetByCategory: categories.map((c) => ({
-        name: c.name,
-        type: c.type,
-        planned: byCategoryId[c.id] ?? 0,
-        // Spent counts only logged transactions; committed bills are listed separately
-        // under fixedExpenses, so the model never double counts them as spent.
-        actualMTD: Math.round((variableByCat.get(c.id) ?? 0) * 100) / 100,
-      })),
-      fixedExpenses: fixed
+      incomeMonthlyNow: round2(plan.incomeMonthly),
+      incomeMonthlyLater: round2(plan.incomeMonthlyLater),
+      incomeStepDate: plan.incomeStepDate,
+      surplusMonthlyNow: round2(plan.surplusMonthly),
+      surplusMonthlyLater: round2(plan.surplusLater),
+      // Savings rate from the one shared definition, so this matches the Spending tab.
+      savingsRate: Math.round(savingsRateMonthly(plan.incomeMonthly, fixed, categories, monthTx.transactions, today) * 1000) / 1000,
+      discretionaryBudgetMonthly: round2(plan.discretionaryBudgetMonthly),
+      budgets,
+      // Bill amounts are the monthly cost (a paid-in-full bill sends its spread, and
+      // its alternative is spread the same way), so the model reasons in one unit and
+      // every resolved saving stays a monthly figure.
+      bills: fixed
         .filter((bill) => bill.active && billActiveOn(bill, today))
         .map((bill) => ({
+          id: bill.id,
           name: bill.name,
-          amount: bill.amount,
           category: nameById.get(bill.categoryId) ?? 'Other',
-          dueDay: bill.dueDay,
+          amount: round2(billMonthlyAmount(bill)),
           lever: effectiveLever(bill, catById.get(bill.categoryId)),
+          alternativeAmount:
+            typeof bill.alternativeAmount === 'number' && Number.isFinite(bill.alternativeAmount)
+              ? round2(billMonthlyAmount({ ...bill, amount: bill.alternativeAmount }))
+              : null,
         })),
+      // The house goal reads the settings target and the derived account balance, the
+      // same single sources every screen uses.
       goals: goals.map((g) => ({
         name: g.name,
-        target: g.target,
-        // The house goal's balance is the combined flagged accounts, so the model sees
-        // the real number, not a stale stored one.
-        current: house && g.id === house.houseGoal.id ? Math.round(house.houseSavings) : g.current,
+        target: house && g.id === house.houseGoal.id ? house.downPaymentTarget : g.target,
+        current: house && g.id === house.houseGoal.id ? round2(house.houseSavings) : g.current,
         targetDate: g.targetDate,
       })),
       assumptions: {
-        assumedAnnualReturn: settings.assumedAnnualReturn,
-        mortgageRateAssumption: settings.mortgageRateAssumption,
-        propertyTaxRateAssumption: settings.propertyTaxRateAssumption,
+        annualReturn: settings.assumedAnnualReturn,
+        mortgageRate: settings.mortgageRateAssumption,
         targetPiti: settings.targetPiti ?? DEFAULTS.targetPiti,
-        targetPitiMin: settings.targetPitiMin,
-        targetPitiMax: settings.targetPitiMax,
+        propertyTaxRate: settings.propertyTaxRateAssumption,
       },
     }
-  }, [settings, plan, categories, byCategoryId, fixed, monthTx.transactions, goals, house, today])
+  }, [settings, plan, categories, fixed, view, monthTx.transactions, goals, house, today])
 
-  // The active bills that may never be fully cut (anything but discretionary), by
-  // lowercased name. A deterministic backstop to the keyword guard: even if the model
-  // phrases a full cut without a protected keyword, naming the bill is enough to catch
-  // it (see cutsProtectedBill).
-  const protectedBillNames = useMemo(() => {
-    const catById = new Map(categories.map((c) => [c.id, c]))
-    return fixed
-      .filter((b) => b.active && effectiveLever(b, catById.get(b.categoryId)) !== 'discretionary')
-      .map((b) => b.name.toLowerCase().trim())
-      .filter((n) => n.length >= 3)
-  }, [fixed, categories])
-
-  const parsed = advice.data ? parseAdvice(advice.data) : null
-  // Drop protected-cut suggestions first, then the ones the user dismissed, so we can
-  // tell "nothing safe to suggest" apart from "you cleared them all".
-  const safeActions = parsed
-    ? parsed.actions
-        .map((action, index) => ({ action, index }))
-        .filter(({ action }) => !cutsProtected(action) && !cutsProtectedBill(action, protectedBillNames))
-    : []
-  const visibleActions = safeActions.filter(({ index }) => !dismissed.has(index))
-  const noneSafe = parsed != null && parsed.actions.length > 0 && safeActions.length === 0
-  // A valid result whose advice is all structural (no dollar-quantified action), so the
-  // "you cleared them all" copy would be wrong: there was nothing to clear.
-  const noQuantifiedActions = parsed != null && parsed.actions.length === 0
+  // Every dollar on the cards is resolved locally from the snapshot the model saw.
+  const resolved = useMemo(
+    () => (advice.data && usedSnapshot ? resolveAdviceActions(advice.data, usedSnapshot) : []),
+    [advice.data, usedSnapshot],
+  )
+  const visibleActions = resolved
+    .map((action, index) => ({ action, index }))
+    .filter(({ index }) => !dismissed.has(index))
 
   function handleGetAdvice() {
     if (!snapshot || advice.isPending) return
     const asked = question.trim()
     setAskedQuestion(asked)
+    setUsedSnapshot(snapshot)
     setDismissed(new Set())
-    advice.mutate(
-      { snapshot, ...(asked ? { question: asked } : {}) },
-      {
-        // Archive the run under this month once it lands. Re-running the same month keeps
-        // the original createdAt and just refreshes updatedAt, so there is one entry per
-        // month and past months are preserved. The archive shape has no question field,
-        // so an asked question is shown live but not archived.
-        onSuccess: (text) => {
-          const existing = archive.entries.find((entry) => entry.month === monthKey)
-          const now = Date.now()
-          archive.save.mutate({
-            month: monthKey,
-            data: {
-              month: monthKey,
-              summary: parseAdvice(text)?.summary ?? '',
-              advice: text,
-              snapshot,
-              createdAt: existing?.createdAt ?? now,
-              updatedAt: now,
-            },
-          })
-        },
-      },
-    )
+    // Archive the run under this month once it lands, chained on the promise rather
+    // than a mutate-scoped callback so navigating away mid-request cannot skip it.
+    // Re-running the same month keeps the original createdAt and just refreshes
+    // updatedAt, so there is one entry per month and past months are preserved. The
+    // archive shape has no question field, so an asked question is shown live but not
+    // archived. Errors surface through the mutation state; the catch keeps the
+    // rejection from being unhandled.
+    const existing = archive.entries.find((entry) => entry.month === currentMonthKey)
+    advice
+      .mutateAsync({ snapshot, ...(asked ? { question: asked } : {}) })
+      .then((result) => {
+        const now = Date.now()
+        archive.save.mutate({
+          month: currentMonthKey,
+          data: {
+            month: currentMonthKey,
+            summary: result.summary,
+            advice: JSON.stringify(result),
+            snapshot,
+            createdAt: existing?.createdAt ?? now,
+            updatedAt: now,
+          },
+        })
+      })
+      .catch(() => undefined)
   }
 
-  // A past month's saved advice, reparsed and passed through the same protected-cut guard
-  // as the live view, so the history renders identical, safe action cards.
-  const viewingParsed = useMemo(() => (viewing ? parseAdvice(viewing.advice) : null), [viewing])
-  const viewingActions = useMemo(
-    () =>
-      viewingParsed
-        ? viewingParsed.actions.filter((a) => !cutsProtected(a) && !cutsProtectedBill(a, protectedBillNames))
-        : [],
-    [viewingParsed, protectedBillNames],
+  // A past month's saved advice, resolved against the snapshot archived with it, so
+  // history renders the same honest cards it showed at the time.
+  const viewingParsed = useMemo(
+    () => (viewing ? parseArchivedAdvice(viewing.advice, viewing.snapshot) : null),
+    [viewing],
   )
 
   return (
@@ -272,8 +260,8 @@ export default function Optimize() {
       <Card>
         <h2 className="text-h2 text-ink">Ways to save</h2>
         <p className="mt-1 text-body text-ink-2">
-          Grounded ways to raise our savings rate and home buying power, based on our real numbers.
-          Every figure is an estimate.
+          Grounded ways to raise our savings rate and home buying power. Every dollar figure is computed from our own
+          numbers, never estimated by the model.
         </p>
         <div className="mt-4 flex flex-col gap-3">
           <Field
@@ -298,7 +286,7 @@ export default function Optimize() {
               leadingIcon={<ScanIcon size={18} />}
               onClick={() => setReceiptOpen(true)}
             >
-              Scan a receipt
+              Scan or upload a receipt
             </Button>
           </div>
         </div>
@@ -327,24 +315,22 @@ export default function Optimize() {
         </Card>
       )}
 
-      {advice.data && parsed && (
+      {advice.data && (
         <>
           {askedQuestion.length > 0 && (
             <p className="px-1 text-caption text-muted">You asked: {askedQuestion}</p>
           )}
-          {parsed.summary.trim().length > 0 && (
+          {advice.data.summary.trim().length > 0 && (
             <Card>
-              <p className="text-body text-ink">{parsed.summary}</p>
+              <p className="text-body text-ink">{advice.data.summary}</p>
             </Card>
           )}
           {visibleActions.length === 0 ? (
             <Card>
               <EmptyNote icon={<SparkleIcon size={28} strokeWidth={1.8} className="text-muted" aria-hidden="true" />}>
-                {noneSafe
-                  ? 'No safe savings to suggest right now. Tap Refresh advice for a fresh look.'
-                  : noQuantifiedActions
-                    ? 'No dollar-quantified savings this time. The summary above has the gist. Tap Refresh advice for more.'
-                    : 'You have cleared every suggestion. Tap Refresh advice for a fresh look.'}
+                {resolved.length === 0
+                  ? 'No concrete moves this time. The summary above has the gist. Tap Refresh advice for a fresh look.'
+                  : 'You have cleared every suggestion. Tap Refresh advice for a fresh look.'}
               </EmptyNote>
             </Card>
           ) : (
@@ -362,18 +348,10 @@ export default function Optimize() {
         </>
       )}
 
-      {advice.data && !parsed && (
-        <Card>
-          <EmptyNote icon={<AlertIcon size={28} strokeWidth={1.8} className="text-muted" aria-hidden="true" />}>
-            We could not read that result. Tap Refresh advice to try again.
-          </EmptyNote>
-        </Card>
-      )}
-
       {!advice.data && !advice.isPending && !advice.isError && (
         <Card>
           <EmptyNote icon={<SparkleIcon size={28} strokeWidth={1.8} className="text-muted" aria-hidden="true" />}>
-            Tap Get advice to see ranked, dollar-quantified ways to save more.
+            Tap Get advice for ranked ways to save, with every figure computed from our own numbers.
           </EmptyNote>
         </Card>
       )}
@@ -402,13 +380,18 @@ export default function Optimize() {
         </section>
       )}
 
-      <ReceiptSheet
-        open={receiptOpen}
-        onClose={() => setReceiptOpen(false)}
-        categories={categories}
-        trendContext={trendContext}
-        onLog={(input) => logExpense(input, house)}
-      />
+      {receiptOpen && (
+        <Suspense fallback={null}>
+          <ReceiptSheet
+            open
+            onClose={() => setReceiptOpen(false)}
+            categories={categories}
+            onLog={async (input) => {
+              await logExpense(input, house)
+            }}
+          />
+        </Suspense>
+      )}
 
       <Sheet
         open={viewing != null}
@@ -421,12 +404,12 @@ export default function Optimize() {
             {viewingParsed && viewingParsed.summary.trim().length > 0 && (
               <p className="text-body text-ink">{viewingParsed.summary}</p>
             )}
-            {viewingActions.length === 0 ? (
+            {!viewingParsed || viewingParsed.actions.length === 0 ? (
               <EmptyNote icon={<SparkleIcon size={28} strokeWidth={1.8} className="text-muted" aria-hidden="true" />}>
-                No dollar-quantified savings were saved for this month.
+                No quantified savings were saved for this month.
               </EmptyNote>
             ) : (
-              viewingActions.map((action, index) => (
+              viewingParsed.actions.map((action, index) => (
                 <AdviceCard
                   key={index}
                   action={action}
@@ -450,24 +433,36 @@ function AdviceCard({
   horizonValid = false,
   onDismiss,
 }: {
-  action: AdviceAction
+  action: ResolvedAdviceAction
   annualReturn: number
   house?: HouseImpactInput
   horizonValid?: boolean
   // Omitted in the read-only archive viewer, where there is nothing to dismiss.
   onDismiss?: () => void
 }) {
-  // Recompute every figure locally from the saving; never trust the model's
+  // Every figure is computed locally from the resolved saving; the model supplies no
   // arithmetic. The home figure shows only when the purchase date is still ahead.
-  const invested30 = futureValueRecurring(action.estMonthly, 30, annualReturn)
+  const saving = action.savingMonthly
+  // The signature if-invested horizons for this recurring monthly saving: 1, 10, and 30
+  // years, matching the log-time reveal, so the core mechanic reads as one consistent lens.
+  const investedHorizons =
+    saving != null && saving > 0
+      ? [1, 10, 30].map((years) => ({ years, value: futureValueRecurring(saving, years, annualReturn) }))
+      : null
   const homeAdded =
-    house && horizonValid ? houseImpactOfMonthly(action.estMonthly, house).affordableHomePriceAdded : null
+    saving != null && house && horizonValid
+      ? houseImpactOfMonthly(saving, house).affordableHomePriceAdded
+      : null
   // A genuine swap (a cheaper alternative, not a full cut) shows the before and after.
-  const showSwap = action.currentMonthly > 0 && action.proposedMonthly > 0
+  const showSwap =
+    action.kind === 'bill_alternative' &&
+    action.currentMonthly != null &&
+    action.proposedMonthly != null &&
+    action.proposedMonthly > 0
   return (
     <Card className="motion-safe:animate-[pop-in_var(--dur)_var(--ease-spring)]">
       <div className="flex items-start justify-between gap-3">
-        <h3 className="min-w-0 break-words text-h3 text-ink">{titleCase(action.title)}</h3>
+        <h3 className="min-w-0 break-words text-h3 text-ink">{capitalizeFirst(action.title)}</h3>
         {onDismiss && (
           <button
             type="button"
@@ -482,27 +477,74 @@ function AdviceCard({
       <p className="mt-1 text-body text-ink-2">{action.detail}</p>
       {showSwap && (
         <p className="mt-2 text-callout text-ink-2">
-          Now <span className="tnum font-medium text-ink">{formatCurrency(action.currentMonthly, { cents: false })}</span> a
-          month, switch to{' '}
-          <span className="tnum font-medium text-ink">{formatCurrency(action.proposedMonthly, { cents: false })}</span>.
+          Now{' '}
+          <span className="tnum font-medium text-ink">
+            {formatCurrency(action.currentMonthly as number, { cents: false })}
+          </span>{' '}
+          a month, the cheaper option is{' '}
+          <span className="tnum font-medium text-ink">
+            {formatCurrency(action.proposedMonthly as number, { cents: false })}
+          </span>
+          .
         </p>
       )}
-      <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4 sm:flex sm:flex-wrap sm:gap-x-8">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-caption text-muted">Monthly savings</span>
-          <Money amount={action.estMonthly} size="lg" tone="positive" cents={false} />
-        </div>
-        {homeAdded != null && (
+      {action.kind === 'trim_category' && action.currentMonthly != null && action.proposedMonthly != null && (
+        <p className="mt-2 text-callout text-ink-2">
+          Trending{' '}
+          <span className="tnum font-medium text-ink">
+            {formatCurrency(action.currentMonthly, { cents: false })}
+          </span>{' '}
+          this month against a{' '}
+          <span className="tnum font-medium text-ink">
+            {formatCurrency(action.proposedMonthly, { cents: false })}
+          </span>{' '}
+          budget.
+        </p>
+      )}
+      {saving != null && saving > 0 && (
+        <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4 sm:flex sm:flex-wrap sm:gap-x-8">
           <div className="flex flex-col gap-0.5">
-            <span className="text-caption text-muted">Toward our home</span>
-            <Money amount={homeAdded} size="lg" tone="positive" compact />
+            <span className="text-caption text-muted">Monthly savings</span>
+            <Money amount={saving} size="lg" tone="positive" cents={false} />
           </div>
-        )}
-        <div className="flex flex-col gap-0.5">
-          <span className="text-caption text-muted">Invested for 30 years</span>
-          <Money amount={invested30} size="lg" compact />
+          {homeAdded != null && (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-caption text-muted">Toward our home</span>
+              <Money amount={homeAdded} size="lg" tone="positive" compact />
+            </div>
+          )}
         </div>
-      </div>
+      )}
+      {investedHorizons && (
+        <div className="mt-3 flex flex-col gap-1.5 border-t border-line pt-3">
+          <span className="text-caption text-muted">This saving, invested instead</span>
+          <div className="grid grid-cols-3 gap-2">
+            {investedHorizons.map(({ years, value }) => (
+              <div key={years} className="flex flex-col items-center gap-0.5">
+                <Money amount={value} size="lg" tone="wealth" compact />
+                <span className="text-caption text-muted">{years} yr</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {action.kind === 'add_alternative' && (
+        <p className="mt-3 text-callout text-ink-2">
+          {action.currentMonthly != null && (
+            <>
+              Now{' '}
+              <span className="tnum font-medium text-ink">
+                {formatCurrency(action.currentMonthly, { cents: false })}
+              </span>{' '}
+              a month.{' '}
+            </>
+          )}
+          <Link to="/bills" className="font-medium text-accent-strong hover:underline">
+            Add the cheaper option's price to the bill
+          </Link>{' '}
+          to see the exact saving.
+        </p>
+      )}
     </Card>
   )
 }

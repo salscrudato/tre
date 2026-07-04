@@ -1,14 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Outlet, useLocation } from 'react-router-dom'
+import { Outlet } from 'react-router-dom'
 import { Logo } from './Logo'
 import { Drawer } from './Drawer'
 import { Sidebar } from './Sidebar'
-import { LogSheet } from './LogSheet'
 import { Toaster } from './Toaster'
 import { ThemeToggle } from './ThemeToggle'
 import { Splash } from './Splash'
 import { Button } from './Button'
-import { MenuIcon, PlusIcon } from './icons/nav'
+import { MenuIcon } from './icons/nav'
 import { HouseholdProvider } from '../context/HouseholdContext'
 import { useHousehold } from '../context/household-context'
 import { useAuth } from '../context/auth-context'
@@ -17,8 +16,8 @@ import { cn } from '../lib/cn'
 
 // Sticky glass header: a hamburger that opens the navigation drawer (top left, in
 // reach of either thumb), the wordmark, and a light/dark toggle. Navigation lives in
-// the drawer (Home, Spending, House, Settings); the round Log action floats bottom
-// right so logging stays one tap away in the thumb zone.
+// the drawer (Home, Spending, Budget, Income, House, Settings). Logging happens only on
+// the Home screen, so there is no floating action button anywhere.
 function Header({ onMenu, menuOpen, className }: { onMenu: () => void; menuOpen: boolean; className?: string }) {
   return (
     <header
@@ -51,28 +50,6 @@ function Header({ onMenu, menuOpen, className }: { onMenu: () => void; menuOpen:
   )
 }
 
-// The floating round Log action. Bottom right in the thumb zone, above the safe-area
-// inset, with a quiet green glow. Opens the same Quick Add in a sheet, so logging is
-// one tap away from every screen except Home, where the Quick Add hero is already the
-// single primary action and a second Log entry would duplicate it.
-function LogFab({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label="Log an expense"
-      aria-haspopup="dialog"
-      className="btn-primary fixed z-40 inline-flex h-14 w-14 items-center justify-center rounded-pill transition active:scale-[0.96] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-      style={{
-        right: 'max(1rem, env(safe-area-inset-right))',
-        bottom: 'calc(1.25rem + env(safe-area-inset-bottom))',
-      }}
-    >
-      <PlusIcon size={26} />
-    </button>
-  )
-}
-
 // Centers a status message (denied or error) with a way forward, so a resolved but
 // blocked state never reads as a stuck spinner.
 function StatusScreen({ title, message, children }: { title: string; message: string; children?: ReactNode }) {
@@ -83,13 +60,6 @@ function StatusScreen({ title, message, children }: { title: string; message: st
       {children}
     </div>
   )
-}
-
-// True only when the household is fully ready, so the floating Log action renders
-// against real data.
-function useHouseholdReady(): boolean {
-  const { status, bootstrapping, joining } = useHousehold()
-  return status !== 'loading' && status !== 'denied' && status !== 'error' && !bootstrapping && !joining
 }
 
 // Gates the authenticated area on the household status, so loading resolves to a
@@ -137,26 +107,9 @@ function ShellGate({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
-// The floating Log action and its sheet, shown only once the household is ready. The
-// hamburger and drawer live in the shell itself so the menu opens before data loads too.
-// On Home the fab is hidden: the Quick Add hero is the screen's one primary action.
-function ReadyChrome() {
-  const [logOpen, setLogOpen] = useState(false)
-  const { pathname } = useLocation()
-  const ready = useHouseholdReady()
-  if (!ready) return null
-  return (
-    <>
-      {pathname !== '/' && <LogFab onClick={() => setLogOpen(true)} />}
-      <LogSheet open={logOpen} onClose={() => setLogOpen(false)} />
-    </>
-  )
-}
-
 // The authenticated shell. The household subscription lives here so it only runs for
 // a signed-in user, and the gate keeps every screen below it from rendering against a
-// not-yet-ready household. Content is padded so the last row of any list clears the
-// floating Log button and its safe-area inset.
+// not-yet-ready household.
 export function AppShell() {
   const [menuOpen, setMenuOpen] = useState(false)
   // The mobile drawer is a full-screen overlay that locks scroll. The desktop sidebar
@@ -171,18 +124,17 @@ export function AppShell() {
     <HouseholdProvider>
       <div className="min-h-dvh bg-bg lg:flex">
         {/* Desktop navigation rail, shown at lg and up; the mobile header and drawer take
-            over below it. The two read from the same DESTINATIONS, so they never drift. */}
+            over below it. Both render NavList, so the two never drift. */}
         <Sidebar className="hidden lg:flex" />
         <div className="flex min-w-0 flex-1 flex-col">
           <Header onMenu={() => setMenuOpen(true)} menuOpen={menuOpen} className="lg:hidden" />
           <Drawer open={menuOpen} onClose={() => setMenuOpen(false)} />
-          <main className="mx-auto w-full max-w-[480px] px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] lg:max-w-[1160px] lg:px-8 lg:pt-8">
+          <main className="mx-auto w-full max-w-[480px] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-4 pb-[calc(3rem+env(safe-area-inset-bottom))] lg:max-w-[1160px] lg:px-8 lg:pt-8">
             <ShellGate>
               <Outlet />
             </ShellGate>
           </main>
         </div>
-        <ReadyChrome />
         <Toaster />
       </div>
     </HouseholdProvider>

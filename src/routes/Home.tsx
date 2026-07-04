@@ -1,18 +1,25 @@
-import { useMemo } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useHouseModel } from '../hooks/useHouseModel'
+import { usePackages } from '../hooks/usePackages'
 import { useTransactions } from '../hooks/useTransactions'
 import { useLogExpense } from '../hooks/useLogExpense'
-import { discretionaryBudget } from '../lib/budget'
+import { toQuickAddPackages } from '../lib/packages'
+import { discretionaryBudget, isCountedSpend } from '../lib/budget'
 import { recentNoteSuggestions } from '../lib/trends'
-import { monthBounds } from '../lib/summary'
+import { homeCategoryOrder, monthBounds } from '../lib/summary'
 import { formatCurrency } from '../lib/format'
 import { cn } from '../lib/cn'
 import { Card } from '../components/Card'
 import { ProgressBar } from '../components/ProgressBar'
 import { QuickAdd, type QuickAddInput } from '../components/QuickAdd'
 import { RecentTransactions } from '../components/RecentTransactions'
+import { ScanIcon } from '../components/icons/Scan'
 import { Spinner } from '../components/Spinner'
+
+// The receipt scanner (with its image helpers and capture callable) is an optional second
+// way in, opened on an explicit tap, so it loads on demand instead of in Home's first paint.
+const ReceiptSheet = lazy(() => import('../components/ReceiptSheet').then((m) => ({ default: m.ReceiptSheet })))
 
 function LoadingBlock({ label }: { label: string }) {
   return (
@@ -39,6 +46,9 @@ export default function Home() {
     useHouseModel()
 
   const { logExpense } = useLogExpense()
+  const { packages } = usePackages()
+  const quickPackages = useMemo(() => toQuickAddPackages(packages), [packages])
+  const [captureOpen, setCaptureOpen] = useState(false)
   const monthTx = useTransactions(monthBounds(today))
   // One recent query serves two readers: the newest 50 seed the optional Other and
   // Dining type-ahead, and the top 5 of the same result render the Recent list, so
@@ -51,29 +61,42 @@ export default function Home() {
   const categoriesLoading = catQueryLoading || (categories.length === 0 && !settings)
   const typeById = useMemo(() => new Map(categories.map((c) => [c.id, c.type])), [categories])
   const discBudget = useMemo(() => discretionaryBudget(categories, byCategoryId), [categories, byCategoryId])
+  // Everything we actually spent this month across the spending categories: every
+  // logged, counted transaction in a variable category. Other and Dining are included,
+  // and a category that runs over its budget still contributes its full amount, so this
+  // is the true total, never a subset. It matches the Spending page headline exactly.
   const discSpent = useMemo(
-    () => monthTx.transactions.filter((t) => typeById.get(t.categoryId) === 'variable').reduce((s, t) => s + t.amount, 0),
+    () =>
+      monthTx.transactions
+        .filter((t) => isCountedSpend(t) && typeById.get(t.categoryId) === 'variable')
+        .reduce((s, t) => s + t.amount, 0),
     [monthTx.transactions, typeById],
   )
 
   const quickCategories = useMemo(() => {
-    // Quick Add is for logging day-to-day spend, so show only the loggable (non-fixed)
-    // categories. Committed bills live in their own fixed categories and are never tapped
-    // here, which keeps the tile grid short even with a long, granular category list.
-    const mapped = categories
-      .filter((c) => c.type !== 'fixed')
-      .map((c) => ({ id: c.id, name: c.name, color: c.color, icon: c.icon, type: c.type }))
-    if (mapped.some((c) => c.name.toLowerCase() === 'other')) return mapped
-    return [...mapped, { id: 'cat_other', name: 'Other', color: 'var(--color-cat-other)', icon: 'dots', type: 'variable' as const }]
+    // Every category is loggable, including bills (so an actual charge can be logged and
+    // compared with the planned amount). The common everyday and savings categories lead;
+    // bill categories follow, a swipe away in the pager. Tiles are exactly the configured
+    // categories, nothing synthetic.
+    return homeCategoryOrder(categories).map((c) => ({
+      id: c.id,
+      name: c.name,
+      color: c.color,
+      icon: c.icon,
+      type: c.type,
+    }))
   }, [categories])
   const savingsGoals = useMemo(() => goals.map((g) => ({ id: g.id, name: g.name })), [goals])
   // Descriptions we have logged before, for the optional Other and Dining type-ahead.
   const noteSuggestions = useMemo(() => recentNoteSuggestions(recentTx.transactions), [recentTx.transactions])
 
-  async function handleLog(input: QuickAddInput) {
-    await logExpense(input, house)
+  function handleLog(input: QuickAddInput) {
+    // Return the created row so the Quick Add can offer a one-tap Undo.
+    return logExpense(input, house)
   }
 
+  // The service returns the newest 50 already sorted biggest first, so the top 5 here
+  // are the largest recent expenses: the default high-to-low order, everywhere.
   const recent = recentTx.transactions.slice(0, 5)
 
   return (
@@ -81,16 +104,32 @@ export default function Home() {
       <h1 className="sr-only">Home</h1>
       <Card padded={false} className="glow-accent hero-tint p-6 sm:p-7">
         {categoriesLoading ? (
-          <LoadingBlock label="Loading your categories" />
+          /* Reserve roughly the QuickAdd's height so Recent does not jump on load. */
+          <div className="flex min-h-[320px] items-center justify-center">
+            <LoadingBlock label="Loading your categories" />
+          </div>
         ) : (
           <QuickAdd
             categories={quickCategories}
             savingsGoals={savingsGoals}
+            packages={quickPackages}
             onLog={handleLog}
+            onUndo={(tx) => recentTx.remove.mutate(tx)}
             noteSuggestions={noteSuggestions}
           />
         )}
       </Card>
+
+      {/* The second way in: photograph a receipt, or upload a screenshot or saved
+          image; every line still gets reviewed before it logs. */}
+      <button
+        type="button"
+        onClick={() => setCaptureOpen(true)}
+        className="inline-flex min-h-11 items-center justify-center gap-2 self-center rounded-pill px-4 text-callout font-medium text-ink-2 transition hover:bg-surface-2 hover:text-ink active:scale-[0.98] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+      >
+        <ScanIcon size={17} aria-hidden="true" />
+        Scan or upload a receipt
+      </button>
 
       {/* Daily-tracking order: the month's position right under the hero, then the
           ledger tail. */}
@@ -125,20 +164,34 @@ export default function Home() {
             <RecentTransactions
               transactions={recent}
               categories={categories}
-              onUpdate={(id, patch) => recentTx.update.mutate({ id, patch })}
-              onDelete={(id) => recentTx.remove.mutate(id)}
+              onUpdate={(tx, patch) => recentTx.update.mutate({ tx, patch })}
+              onDelete={(tx) => recentTx.remove.mutate(tx)}
               showHouseGivenUp={false}
             />
           )}
         </Card>
       </section>
+
+      {captureOpen && (
+        <Suspense fallback={null}>
+          <ReceiptSheet
+            open
+            onClose={() => setCaptureOpen(false)}
+            categories={categories}
+            onLog={async (input) => {
+              await logExpense(input, house)
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   )
 }
 
 // The single quiet glance: this month's spending money against its budget, with a
 // real-time pace beside it (where the month is trending, from how much has elapsed),
-// tappable into the full Spending view. Nothing heavy.
+// tappable into the full Spending view. Nothing heavy. Spending counts ONLY what the
+// couple logs (manually or via capture); a bill is never auto-counted as spent.
 function MonthGlance({
   spent,
   budget,
@@ -153,7 +206,8 @@ function MonthGlance({
   error: boolean
 }) {
   const noBudget = budget <= 0
-  const left = budget - spent
+  const used = spent
+  const left = budget - used
   const over = !noBudget && left < 0
   // Project the month-end spend from the share of the month already gone, so the couple
   // sees where they are trending, not just where they stand today.
@@ -164,7 +218,7 @@ function MonthGlance({
   return (
     <Link
       to="/spending"
-      aria-label="This month, see spending details"
+      aria-label="Everyday spending this month, see details"
       className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
     >
       <Card className="transition active:scale-[0.99] motion-reduce:active:scale-100">
@@ -175,15 +229,15 @@ function MonthGlance({
         ) : (
           <div className="flex flex-col gap-2.5">
             <div className="flex items-baseline justify-between gap-2">
-              <span className="text-callout font-medium text-ink">This month</span>
+              <span className="text-callout font-medium text-ink">Everyday spending</span>
               <span className="tnum text-caption text-ink-2">
-                {formatCurrency(spent, { cents: false })}
+                {formatCurrency(used, { cents: false })}
                 {!noBudget && <> of {formatCurrency(budget, { cents: false })}</>}
               </span>
             </div>
             {!noBudget && (
               <ProgressBar
-                value={spent}
+                value={used}
                 max={budget}
                 showLabel={false}
                 markerPct={(dayOfMonth / daysInMonth) * 100}

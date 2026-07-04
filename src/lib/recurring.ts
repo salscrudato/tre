@@ -18,6 +18,7 @@
 
 import type { BillLever, Category, FixedExpense } from '../types'
 import { houseImpactOfMonthly, type HouseImpactInput } from './money'
+import { billMonthlyAmount } from './summary'
 import { clampToCents, formatDate } from './format'
 
 const HOUSING_RE = /\b(rent|mortgage|housing|escrow|hoa)\b/i
@@ -139,20 +140,26 @@ export function recurringImpact(
   ctx: RecurringContext,
 ): RecurringImpact {
   const lever = effectiveLever(bill, category)
+  // All home math runs on the bill's monthly cost. For a paid-in-full bill that is the
+  // spread (amount / coverageMonths), never the one-time price, and its alternative is
+  // spread the same way so the saving compares like with like.
+  const monthly = billMonthlyAmount(bill)
 
   if (lever === 'housing') return { kind: 'housing' }
 
   if (lever === 'savings') {
     const fundsHouse = bill.goalId != null && bill.goalId === ctx.houseGoalId
     if (fundsHouse) {
-      return { kind: 'house-building', monthly: bill.amount, homePrice: homePriceFor(bill.amount, ctx) }
+      return { kind: 'house-building', monthly, homePrice: homePriceFor(monthly, ctx) }
     }
     const goalName = bill.goalId ? (ctx.goalNameById.get(bill.goalId) ?? null) : null
     return { kind: 'other-savings', goalName }
   }
 
   const alt = hasAlternative(bill)
-  const difference = alt ? clampToCents(bill.amount - (bill.alternativeAmount as number)) : 0
+  const difference = alt
+    ? clampToCents(monthly - billMonthlyAmount({ ...bill, amount: bill.alternativeAmount as number }))
+    : 0
   // The saving is shown in whole dollars, so an alternative under fifty cents cheaper would
   // read "save $0 a month" beside a real home figure. Require a saving that rounds to at
   // least a dollar before treating the alternative as meaningful; otherwise the row falls
@@ -169,12 +176,12 @@ export function recurringImpact(
       case 'childcare':
         return {
           kind: 'childcare-tailwind',
-          monthly: bill.amount,
+          monthly,
           endLabel: bill.endDate ? formatDate(bill.endDate, 'month') : null,
         }
       case 'debt':
         return bill.endDate
-          ? { kind: 'debt-ends', monthly: bill.amount, endLabel: formatDate(bill.endDate, 'month') }
+          ? { kind: 'debt-ends', monthly, endLabel: formatDate(bill.endDate, 'month') }
           : { kind: 'debt-note' }
       case 'insurance':
         return { kind: 'insurance-shop' }
@@ -191,5 +198,5 @@ export function recurringImpact(
   if (altMeaningful) {
     return { kind: 'discretionary-downgrade', saving: difference, homePrice: homePriceFor(difference, ctx) }
   }
-  return { kind: 'discretionary-cut', saving: bill.amount, homePrice: homePriceFor(bill.amount, ctx) }
+  return { kind: 'discretionary-cut', saving: monthly, homePrice: homePriceFor(monthly, ctx) }
 }

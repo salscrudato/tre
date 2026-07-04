@@ -27,9 +27,18 @@ export async function deleteCategoryReassigning(
     getDocs(query(colRef('transactions'), where('categoryId', '==', categoryId))),
     getDocs(query(colRef('fixedExpenses'), where('categoryId', '==', categoryId))),
   ])
-  const batch = writeBatch(db)
-  txSnap.docs.forEach((d) => batch.update(d.ref, { categoryId: fallbackCategoryId }))
-  fixedSnap.docs.forEach((d) => batch.update(d.ref, { categoryId: fallbackCategoryId }))
-  batch.delete(docRef('categories', categoryId))
-  await batch.commit()
+  // Firestore caps a batch at 500 operations, so reassign in chunks and delete the
+  // category last: if a chunk fails midway, nothing is orphaned, the delete never ran.
+  const refs = [...txSnap.docs, ...fixedSnap.docs].map((d) => d.ref)
+  const CHUNK = 450
+  for (let start = 0; start < refs.length; start += CHUNK) {
+    const batch = writeBatch(db)
+    for (const ref of refs.slice(start, start + CHUNK)) {
+      batch.update(ref, { categoryId: fallbackCategoryId })
+    }
+    await batch.commit()
+  }
+  const final = writeBatch(db)
+  final.delete(docRef('categories', categoryId))
+  await final.commit()
 }

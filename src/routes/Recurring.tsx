@@ -1,13 +1,18 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { ChevronLeftIcon } from '../components/icons/ui'
 import { PlusIcon } from '../components/icons/nav'
 import { useAuth } from '../context/auth-context'
 import { useFixed } from '../hooks/useFixed'
+import { usePackages } from '../hooks/usePackages'
 import { useHouseModel } from '../hooks/useHouseModel'
 import { recurringImpact, type RecurringContext, type RecurringImpact } from '../lib/recurring'
-import { billActiveOn, memberFromUser, sumAmounts } from '../lib/summary'
-import { formatDate, formatPercent, titleCase } from '../lib/format'
+import { billActiveOn, billCoverage, billMonthlyAmount, memberFromUser, monthKey } from '../lib/summary'
+import { perSessionCost, remainingValue, sessionsRemaining } from '../lib/packages'
+import { recordBillPayment, recordPackagePurchase } from '../services/transactions'
+import { showToast } from '../lib/toast'
+import { formatCurrency, formatDate, formatPercent, titleCase } from '../lib/format'
 import { resolveCategoryIcon } from '../config/icons'
 import { Card } from '../components/Card'
 import { Button } from '../components/Button'
@@ -15,9 +20,11 @@ import { Money } from '../components/Money'
 import { Spinner } from '../components/Spinner'
 import { BillImpactLine } from '../components/BillImpact'
 import { BillSheet, type BillFormData } from '../components/BillSheet'
-import type { Category, FixedExpense, MemberName } from '../types'
+import { PackageSheet, type PackageFormData } from '../components/PackageSheet'
+import type { Category, FixedExpense, MemberName, Package } from '../types'
 
 type SheetState = { mode: 'add' } | { mode: 'edit'; bill: FixedExpense } | null
+type PackageSheetState = { mode: 'add' } | { mode: 'edit'; pkg: Package } | null
 
 // Small display-only category tag (the chip primitive is a button; rows are already
 // tappable to edit).
@@ -27,7 +34,12 @@ function CategoryTag({ category }: { category: Category | undefined }) {
   return (
     <span
       className="inline-flex items-center gap-1 rounded-pill px-2 py-0.5 text-caption font-medium"
-      style={{ backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`, color }}
+      style={{
+        backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`,
+        // Mix toward ink (the CategoryChip treatment) so a light palette hue stays
+        // readable as text in both themes.
+        color: `color-mix(in srgb, ${color} 55%, var(--color-ink))`,
+      }}
     >
       <Icon size={12} strokeWidth={2} aria-hidden="true" />
       {titleCase(category?.name ?? 'Other')}
@@ -37,12 +49,14 @@ function CategoryTag({ category }: { category: Category | undefined }) {
 
 export default function Recurring() {
   const { user } = useAuth()
+  const qc = useQueryClient()
   // Share the one reconciled model with every other screen, so the per-bill home impact
   // and the house contribution use the same stepped (September) schedule and the same
   // current income, never a flat or fully-ramped figure that disagrees with the rest.
   const { plan, house, horizonValid, categories, goals, houseGoalId, today } = useHouseModel()
   // useFixed again only for the bill mutations; React Query dedupes the shared read.
   const { fixed, isLoading, isError, create, update, remove } = useFixed()
+  const packagesQuery = usePackages()
 
   // Shared context for the honest per-bill home impact. The horizon is invalid when
   // the target purchase date is today or in the past; then we suppress home numbers
@@ -58,28 +72,30 @@ export default function Recurring() {
   }, [house, goals, horizonValid, houseGoalId])
 
   const [sheet, setSheet] = useState<SheetState>(null)
+  const [packageSheet, setPackageSheet] = useState<PackageSheetState>(null)
 
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
-  // Bills past their end date no longer count in any total or impact; they sit in a
-  // quiet Ended group at the bottom, still editable, never silently deleted.
+  // Bills past their end date (or coverage window) no longer count in any total or
+  // impact; they sit in a quiet Ended group at the bottom, still editable, never
+  // silently deleted. The service returns bills sorted biggest monthly cost first.
   const liveBills = useMemo(() => fixed.filter((bill) => billActiveOn(bill, today)), [fixed, today])
   const endedBills = useMemo(() => fixed.filter((bill) => !billActiveOn(bill, today)), [fixed, today])
-  // Current take-home (Lisa's pay starts in September), so the percent matches the rest.
+  // Current take-home (an income with a future start month is excluded), so the
+  // percent matches the rest.
   const income = plan?.incomeMonthly ?? 0
-  // Recurring cost excludes savings contributions (the house bills): saving is not a
-  // cost, and counting it here would overstate what our bills take from take-home.
-  const totalFixed = sumAmounts(
-    liveBills.filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type !== 'savings'),
-  )
-  // The all-in total splits into two honest parts so it never reads as a contradiction
+  // The headline splits into two honest parts so it never reads as a contradiction
   // with the "Fixed bills" figure on Spending: the fixed bills (rent, daycare, the
-  // rest) and the recurring bills that sit inside our spending budget.
-  const fixedOnly = sumAmounts(
-    liveBills.filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type === 'fixed'),
-  )
-  const inSpendingMoney = sumAmounts(
-    liveBills.filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type === 'variable'),
-  )
+  // rest) and the recurring bills that sit inside our spending budget. The headline is
+  // exactly their sum, so the parts always tie. Savings contributions are excluded:
+  // saving is not a cost. A bill in a deleted category counts as fixed, never dropped.
+  // Every figure is the bill's monthly cost, so a paid-in-full bill counts its spread.
+  const fixedOnly = liveBills
+    .filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type !== 'variable' && categoryById.get(bill.categoryId)?.type !== 'savings')
+    .reduce((sum, bill) => sum + billMonthlyAmount(bill), 0)
+  const inSpendingMoney = liveBills
+    .filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type === 'variable')
+    .reduce((sum, bill) => sum + billMonthlyAmount(bill), 0)
+  const totalFixed = fixedOnly + inSpendingMoney
   const percentOfIncome = income > 0 ? totalFixed / income : 0
 
   // The two house deposits map to the two paydays: show them as one House savings line
@@ -89,6 +105,7 @@ export default function Recurring() {
     () =>
       liveBills
         .filter((b) => b.active && houseGoalId != null && b.goalId === houseGoalId)
+        .slice()
         .sort((a, b) => a.dueDay - b.dueDay),
     [liveBills, houseGoalId],
   )
@@ -109,7 +126,7 @@ export default function Recurring() {
     return map
   }, [listBills, categoryById, impactCtx])
 
-  const houseDepositsTotal = activeHouseBills.reduce((sum, b) => sum + b.amount, 0)
+  const houseDepositsTotal = activeHouseBills.reduce((sum, b) => sum + billMonthlyAmount(b), 0)
   const houseSavingsCategory = activeHouseBills[0] ? categoryById.get(activeHouseBills[0].categoryId) : undefined
   const houseDepositsImpact = useMemo(
     () =>
@@ -122,10 +139,39 @@ export default function Recurring() {
 
   const createdBy: MemberName = memberFromUser(user)
 
-  function handleSubmit(data: BillFormData) {
-    if (sheet?.mode === 'edit') update.mutate({ id: sheet.bill.id, patch: data })
-    else create.mutate({ ...data, owner: createdBy })
+  // Packages live in the discretionary categories (their sessions are day-to-day
+  // spend); sessions are logged from the Quick Add. Savings buckets stay out: a
+  // savings log credits a goal, which is a different flow.
+  const loggableCategories = useMemo(() => categories.filter((c) => c.type === 'variable'), [categories])
+  const livePackages = packagesQuery.packages
+
+  async function handleSubmit(data: BillFormData) {
+    const { recordPayment, ...patch } = data
+    let billId: string
+    if (sheet?.mode === 'edit') {
+      billId = sheet.bill.id
+      update.mutate({ id: billId, patch })
+    } else {
+      billId = await create.mutateAsync({ ...patch })
+    }
     setSheet(null)
+    // The one real outflow, written after the bill saves so the row can point at it.
+    // A failure here must be seen: the bill is saved either way, so the couple can
+    // add the row by re-saving the coverage window later.
+    if (recordPayment) {
+      try {
+        await recordBillPayment({
+          billId,
+          name: patch.name,
+          amount: patch.amount,
+          categoryId: patch.categoryId,
+          createdBy,
+        })
+        void qc.invalidateQueries({ queryKey: ['transactions'] })
+      } catch {
+        showToast('The bill saved, but recording the payment in history failed. Edit the bill and adjust its coverage to try again.')
+      }
+    }
   }
 
   function handleDelete(id: string) {
@@ -133,15 +179,41 @@ export default function Recurring() {
     setSheet(null)
   }
 
+  async function handlePackageSubmit(data: PackageFormData) {
+    const { recordPurchase, ...pkg } = data
+    if (packageSheet?.mode === 'edit') {
+      packagesQuery.update.mutate({ id: packageSheet.pkg.id, patch: pkg })
+      setPackageSheet(null)
+      return
+    }
+    const packageId = await packagesQuery.create.mutateAsync(pkg)
+    setPackageSheet(null)
+    if (recordPurchase) {
+      try {
+        await recordPackagePurchase({
+          packageId,
+          name: pkg.name,
+          price: pkg.price,
+          categoryId: pkg.categoryId,
+          purchasedOn: pkg.purchasedOn,
+          createdBy,
+        })
+        void qc.invalidateQueries({ queryKey: ['transactions'] })
+      } catch {
+        showToast('The package saved, but recording the purchase in history failed.')
+      }
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <Link
-        to="/spending"
-        aria-label="Back to Spending"
+        to="/budget"
+        aria-label="Back to Budget"
         className="inline-flex min-h-11 w-fit items-center gap-1 rounded-md text-callout text-ink-2 transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
       >
         <ChevronLeftIcon size={18} strokeWidth={2} aria-hidden="true" />
-        Spending
+        Budget
       </Link>
 
       {!isLoading && !isError && liveBills.length > 0 && (
@@ -207,13 +279,14 @@ export default function Recurring() {
           </p>
         ) : liveBills.length === 0 ? (
           <p className="px-6 py-12 text-center text-callout text-muted">
-            No current bills. Everything here has ended.
+            No bills running this month.
           </p>
         ) : (
           <ul className="flex flex-col">
             {listBills.map((bill) => {
               const category = categoryById.get(bill.categoryId)
               const impact = impactByBillId.get(bill.id) ?? null
+              const coverage = billCoverage(bill, today)
               return (
                 <li key={bill.id} className="border-b border-line last:border-b-0">
                   <button
@@ -226,12 +299,32 @@ export default function Recurring() {
                         {titleCase(bill.name)}
                         {!bill.active && <span className="text-caption font-normal text-muted"> (paused)</span>}
                       </span>
-                      <Money amount={bill.amount} className="shrink-0" tone={bill.active ? 'default' : 'muted'} />
+                      <Money
+                        amount={billMonthlyAmount(bill)}
+                        className="shrink-0"
+                        tone={bill.active ? 'default' : 'muted'}
+                      />
                     </span>
                     <span className="flex items-center gap-2">
                       <CategoryTag category={category} />
-                      <span className="text-caption text-muted">Day {bill.dueDay}</span>
+                      <span className="text-caption text-muted">
+                        {coverage ? 'Paid in full' : `Day ${bill.dueDay}`}
+                        {bill.endDate && !coverage && <>, ends {formatDate(bill.endDate, 'month')}</>}
+                      </span>
                     </span>
+                    {coverage && (
+                      <span className="text-caption text-muted">
+                        <span className="tnum">{formatCurrency(bill.amount, { cents: false })}</span> covers{' '}
+                        {formatDate(`${coverage.startMonth}-01`, 'month')} to {formatDate(`${coverage.endMonth}-01`, 'month')}
+                        {coverage.monthsLeft > 0 && (
+                          <>
+                            : {coverage.monthsLeft} {coverage.monthsLeft === 1 ? 'month' : 'months'} left,{' '}
+                            <span className="tnum">{formatCurrency(coverage.remainingValue, { cents: false })}</span>{' '}
+                            of value remaining
+                          </>
+                        )}
+                      </span>
+                    )}
                     {impact && <BillImpactLine impact={impact} />}
                   </button>
                 </li>
@@ -256,12 +349,12 @@ export default function Recurring() {
                         <button
                           type="button"
                           onClick={() => setSheet({ mode: 'edit', bill: deposit })}
-                          className="flex w-full items-center justify-between gap-3 rounded-md px-1 py-1.5 text-left transition-colors duration-[var(--dur-fast)] hover:bg-surface-2 active:bg-line-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+                          className="flex min-h-11 w-full items-center justify-between gap-3 rounded-md px-1 py-1.5 text-left transition-colors duration-[var(--dur-fast)] hover:bg-surface-2 active:bg-line-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
                         >
                           <span className="text-caption text-muted">
                             Deposit {index + 1}, day {deposit.dueDay}
                           </span>
-                          <Money amount={deposit.amount} size="sm" tone="muted" cents={false} />
+                          <Money amount={deposit.amount} size="sm" tone="muted" />
                         </button>
                       </li>
                     ))}
@@ -273,13 +366,89 @@ export default function Recurring() {
         )}
       </Card>
 
+      {/* Prepaid packages: paid once, drawn down a session at a time from the Quick
+          Add. Kept beside the bills because both are money already spoken for. */}
+      <section aria-label="Prepaid packages" className="flex flex-col gap-2">
+        <div className="flex items-center justify-between px-1">
+          <h2 className="text-caption font-semibold uppercase tracking-wide text-muted">Prepaid packages</h2>
+          <button
+            type="button"
+            onClick={() => setPackageSheet({ mode: 'add' })}
+            className="inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-caption font-medium text-accent-strong transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+          >
+            <PlusIcon size={14} strokeWidth={2.2} aria-hidden="true" />
+            Add package
+          </button>
+        </div>
+        <Card padded={false} className="overflow-hidden">
+          {packagesQuery.isLoading ? (
+            <div role="status" className="flex items-center justify-center gap-2 px-6 py-8 text-muted">
+              <Spinner size={18} />
+              <span className="text-callout">Loading packages</span>
+            </div>
+          ) : packagesQuery.isError ? (
+            <p role="alert" className="px-6 py-8 text-center text-callout text-danger">
+              Could not load packages. Check your connection.
+            </p>
+          ) : livePackages.length === 0 ? (
+            <p className="px-6 py-8 text-center text-callout text-muted">
+              Nothing prepaid yet. Add one when you buy a set of sessions up front, and logging a session will draw
+              it down instead of adding a new expense.
+            </p>
+          ) : (
+            <ul className="flex flex-col">
+              {livePackages.map((pkg) => {
+                const left = sessionsRemaining(pkg)
+                const category = categoryById.get(pkg.categoryId)
+                return (
+                  <li key={pkg.id} className="border-b border-line last:border-b-0">
+                    <button
+                      type="button"
+                      onClick={() => setPackageSheet({ mode: 'edit', pkg })}
+                      className="flex w-full flex-col gap-1.5 px-4 py-3 text-left transition-colors duration-[var(--dur-fast)] hover:bg-surface-2 active:bg-line-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+                    >
+                      <span className="flex items-center justify-between gap-3">
+                        <span className="truncate text-callout font-medium text-ink">
+                          {titleCase(pkg.name)}
+                          {(!pkg.active || left === 0) && (
+                            <span className="text-caption font-normal text-muted">
+                              {' '}
+                              ({left === 0 ? 'used up' : 'paused'})
+                            </span>
+                          )}
+                        </span>
+                        <Money amount={pkg.price} className="shrink-0" tone={pkg.active && left > 0 ? 'default' : 'muted'} />
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <CategoryTag category={category} />
+                        <span className="text-caption text-muted">
+                          {left} of {pkg.sessions} {pkg.sessions === 1 ? 'session' : 'sessions'} left
+                          {left > 0 && (
+                            <>
+                              , <span className="tnum">{formatCurrency(perSessionCost(pkg))}</span> each,{' '}
+                              <span className="tnum">{formatCurrency(remainingValue(pkg), { cents: false })}</span>{' '}
+                              remaining
+                            </>
+                          )}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </Card>
+      </section>
+
       {!isLoading && !isError && endedBills.length > 0 && (
-        <section aria-label="Ended bills" className="flex flex-col gap-2">
-          <h2 className="px-1 text-caption font-semibold uppercase tracking-wide text-muted">Ended</h2>
+        <section aria-label="Bills not running this month" className="flex flex-col gap-2">
+          <h2 className="px-1 text-caption font-semibold uppercase tracking-wide text-muted">Not running this month</h2>
           <Card padded={false} className="overflow-hidden">
             <ul className="flex flex-col">
               {endedBills.map((bill) => {
                 const category = categoryById.get(bill.categoryId)
+                const coverage = billCoverage(bill, today)
                 return (
                   <li key={bill.id} className="border-b border-line last:border-b-0">
                     <button
@@ -293,8 +462,18 @@ export default function Recurring() {
                       </span>
                       <span className="flex items-center gap-2">
                         <CategoryTag category={category} />
-                        {bill.endDate && (
-                          <span className="text-caption text-muted">Ended {formatDate(bill.endDate, 'month')}</span>
+                        {coverage ? (
+                          // A paid-in-full window can also start in the future; say
+                          // which side of it we are on instead of calling both "ended".
+                          <span className="text-caption text-muted">
+                            {monthKey(today) < coverage.startMonth
+                              ? `Coverage starts ${formatDate(`${coverage.startMonth}-01`, 'month')}`
+                              : `Coverage ended ${formatDate(`${coverage.endMonth}-01`, 'month')}`}
+                          </span>
+                        ) : (
+                          bill.endDate && (
+                            <span className="text-caption text-muted">Ended {formatDate(bill.endDate, 'month')}</span>
+                          )
                         )}
                       </span>
                     </button>
@@ -313,9 +492,28 @@ export default function Recurring() {
           categories={categories}
           goals={goals}
           impactCtx={impactCtx}
+          defaultOwner={createdBy}
           onClose={() => setSheet(null)}
           onSubmit={handleSubmit}
           onDelete={sheet.mode === 'edit' ? () => handleDelete(sheet.bill.id) : undefined}
+        />
+      )}
+
+      {packageSheet && (
+        <PackageSheet
+          key={packageSheet.mode === 'edit' ? packageSheet.pkg.id : 'add-package'}
+          pkg={packageSheet.mode === 'edit' ? packageSheet.pkg : undefined}
+          categories={loggableCategories}
+          onClose={() => setPackageSheet(null)}
+          onSubmit={handlePackageSubmit}
+          onDelete={
+            packageSheet.mode === 'edit'
+              ? () => {
+                  packagesQuery.remove.mutate(packageSheet.pkg.id)
+                  setPackageSheet(null)
+                }
+              : undefined
+          }
         />
       )}
     </div>

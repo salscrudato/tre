@@ -64,7 +64,7 @@ async function decodeImage(file: File): Promise<ImageBitmap | HTMLImageElement> 
 // Decode an image file, scale it so the longest side is at most maxDim (never upscale),
 // and re-encode as JPEG at quality 0.8. When the browser cannot decode or re-encode the
 // file, the raw bytes are returned unchanged with their original type.
-export async function imageFileToBase64(file: File, maxDim = 1600): Promise<EncodedImage> {
+export async function imageFileToBase64(file: File, maxDim = 1280): Promise<EncodedImage> {
   const rawType: EncodedImageMediaType =
     file.type === 'image/png' || file.type === 'image/webp' ? file.type : 'image/jpeg'
   try {

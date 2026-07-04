@@ -36,19 +36,23 @@ const bill = (over: Partial<FixedExpense>): FixedExpense => ({
   ...over,
 })
 
+// The two named fixed savings transfers that drive the house pace.
 const fixed: FixedExpense[] = [
   bill({ id: 'fx_rent', name: 'Rent', amount: 4050, categoryId: 'cat_housing' }),
   bill({ id: 'fx_daycare', name: 'Daycare', amount: 1900, categoryId: 'cat_childcare' }),
   bill({ id: 'fx_pseg', name: 'PSEG', amount: 200, categoryId: 'cat_utilities' }),
   bill({ id: 'fx_netflix', name: 'Netflix', amount: 20, categoryId: 'cat_subscriptions' }),
-  bill({ id: 'fx_house1', name: 'House Savings 1', amount: 275, categoryId: 'cat_savings', goalId: 'goal_house' }),
-  bill({ id: 'fx_house2', name: 'House Savings 2', amount: 275, categoryId: 'cat_savings', goalId: 'goal_house' }),
+  bill({ id: 'fx_house_sal', name: 'House Savings - Sal', amount: 5000, categoryId: 'cat_savings', goalId: 'goal_house', owner: 'Sal' }),
+  bill({ id: 'fx_house_lisa', name: 'House Savings - Lisa', amount: 1000, categoryId: 'cat_savings', goalId: 'goal_house', owner: 'Lisa' }),
 ]
+
+// The same plan without any house transfer, for the surplus fallback cases.
+const fixedNoHouse = fixed.filter((f) => f.goalId !== 'goal_house')
 
 const byCategoryId: Record<string, number> = {
   cat_subscriptions: 200,
   cat_groceries: 1000,
-  cat_savings: 550,
+  cat_savings: 6000,
 }
 
 const base = { incomes, fixed, categories, byCategoryId, houseGoalId: 'goal_house' as string | null }
@@ -74,26 +78,44 @@ describe('householdPlan', () => {
 
   it('keeps house savings bills separate and out of the surplus subtraction', () => {
     const plan = householdPlan({ settings: {}, ...base })
-    expect(plan.houseSavingsBillsMonthly).toBe(550)
+    expect(plan.houseSavingsBillsMonthly).toBe(6000)
     expect(plan.otherGoalContributionsMonthly).toBe(0)
     // 17200 - 6150 fixed - 1200 discretionary - 0 other goals.
     expect(plan.surplusMonthly).toBe(9850)
     expect(plan.availableForHouseMonthly).toBe(9850)
   })
 
-  it('defaults the house contribution to the surplus and attributes it by income share', () => {
+  it('drives the contribution from the fixed savings bills and attributes it by bill owner', () => {
     const plan = householdPlan({ settings: {}, ...base })
+    expect(plan.houseContributionMonthly).toBe(6000)
+    expect(plan.houseContributionSource).toBe('bills')
+    expect(plan.houseContributionSchedule).toEqual({ monthlyNow: 6000 })
+    expect(plan.houseContributionByMember.Sal).toBe(5000)
+    expect(plan.houseContributionByMember.Lisa).toBe(1000)
+  })
+
+  it('reports the surplus beyond the fixed savings as unallocated (the work left to do)', () => {
+    const plan = householdPlan({ settings: {}, ...base })
+    // 9850 surplus, 6000 committed by the transfers: 3850 not yet claimed.
+    expect(plan.unallocatedMonthly).toBe(3850)
+  })
+
+  it('falls back to the surplus, attributed by income share, when no house savings bill exists', () => {
+    const plan = householdPlan({ settings: {}, ...base, fixed: fixedNoHouse })
     expect(plan.houseContributionMonthly).toBe(9850)
-    expect(plan.houseContributionIsSurplus).toBe(true)
+    expect(plan.houseContributionSource).toBe('surplus')
+    // The surplus fallback claims everything; nothing is left unallocated.
+    expect(plan.unallocatedMonthly).toBe(0)
     expect(plan.houseContributionByMember.Sal).toBeCloseTo(9850 * (12500 / 17200), 4)
     expect(plan.houseContributionByMember.Lisa).toBeCloseTo(9850 * (4700 / 17200), 4)
     expect(plan.houseContributionByMember.Sal + plan.houseContributionByMember.Lisa).toBeCloseTo(9850, 6)
   })
 
-  it('uses a configured contribution override when set', () => {
+  it('uses a configured contribution override when set, even over the bills', () => {
     const plan = householdPlan({ settings: { houseContributionMonthly: 7000 }, ...base })
     expect(plan.houseContributionMonthly).toBe(7000)
-    expect(plan.houseContributionIsSurplus).toBe(false)
+    expect(plan.houseContributionSource).toBe('override')
+    expect(plan.unallocatedMonthly).toBe(9850 - 7000)
   })
 
   it('subtracts other goal contributions and clamps a negative surplus to zero available', () => {
@@ -106,7 +128,10 @@ describe('householdPlan', () => {
     // 17200 - 6150 - 1200 - 12000 is negative; available clamps to zero.
     expect(plan.surplusMonthly).toBeLessThan(0)
     expect(plan.availableForHouseMonthly).toBe(0)
-    expect(plan.houseContributionMonthly).toBe(0)
+    // The committed transfers still move, so the pace stays honest about them; the
+    // unallocated figure goes negative, exposing the over-committed plan.
+    expect(plan.houseContributionMonthly).toBe(6000)
+    expect(plan.unallocatedMonthly).toBeLessThan(0)
   })
 })
 
@@ -122,7 +147,7 @@ describe('householdPlan with a bill past its end date', () => {
     // Same as without the lease: it ended in March and must not drag the plan.
     expect(plan.committedFixedMonthly).toBe(6150)
     expect(plan.surplusMonthly).toBe(9850)
-    expect(plan.houseContributionMonthly).toBe(9850)
+    expect(plan.houseContributionMonthly).toBe(6000)
   })
 
   it('still counts a bill whose end date is ahead', () => {
@@ -135,22 +160,22 @@ describe('householdPlan with a bill past its end date', () => {
     expect(plan.surplusMonthly).toBe(9450)
   })
 
-  it('excludes an ended savings bill from goal contributions', () => {
+  it('excludes an ended savings bill from goal contributions and the pace', () => {
     const withEnded: FixedExpense[] = [
       ...fixed,
       bill({ id: 'fx_old', name: 'Old House Savings', amount: 300, categoryId: 'cat_savings', goalId: 'goal_house', endDate: '2026-01-01' }),
       bill({ id: 'fx_529', name: '529 Plan', amount: 250, categoryId: 'cat_savings', goalId: 'goal_college', endDate: '2026-02-01' }),
     ]
     const plan = householdPlan({ settings: {}, ...base, fixed: withEnded, today })
-    expect(plan.houseSavingsBillsMonthly).toBe(550)
+    expect(plan.houseSavingsBillsMonthly).toBe(6000)
     expect(plan.otherGoalContributionsMonthly).toBe(0)
     expect(plan.surplusMonthly).toBe(9850)
+    expect(plan.houseContributionMonthly).toBe(6000)
   })
 })
 
-describe('householdPlan with a time-varying income (Lisa starts in September)', () => {
+describe('householdPlan with a time-varying income (an income that starts later)', () => {
   const today = new Date(2026, 5, 30) // June 30, 2026, before September
-  // Lisa's pay starts in September; Sal's is already in effect.
   const stepped: Income[] = [
     { id: 'inc_sal', name: 'Accenture', owner: 'Sal', netPerPaycheck: 6250, frequency: 'semimonthly', payDays: [15, 30] },
     {
@@ -173,8 +198,18 @@ describe('householdPlan with a time-varying income (Lisa starts in September)', 
     expect(plan.incomeStepDate).toBe('2026-09-01')
   })
 
-  it('steps the surplus and builds a stepping contribution schedule', () => {
+  it('keeps the bills-driven contribution flat across the income step', () => {
     const plan = householdPlan({ settings: {}, ...base, incomes: stepped, today })
+    // The transfers are committed regardless of the step; only the unallocated
+    // surplus grows when the second income starts.
+    expect(plan.houseContributionMonthly).toBe(6000)
+    expect(plan.houseContributionLater).toBe(6000)
+    expect(plan.houseContributionSchedule).toEqual({ monthlyNow: 6000 })
+    expect(plan.unallocatedMonthly).toBe(12500 - 6150 - 1200 - 6000)
+  })
+
+  it('steps the surplus fallback and builds a stepping contribution schedule', () => {
+    const plan = householdPlan({ settings: {}, ...base, fixed: fixedNoHouse, incomes: stepped, today })
     // 12500 - 6150 fixed - 1200 discretionary now; 17200 - 6150 - 1200 from September.
     expect(plan.surplusMonthly).toBe(5150)
     expect(plan.surplusLater).toBe(9850)
@@ -191,6 +226,7 @@ describe('householdPlan with a time-varying income (Lisa starts in September)', 
     const plan = householdPlan({
       settings: { houseContributionMonthly: 7000 },
       ...base,
+      fixed: fixedNoHouse,
       incomes: stepped,
       today,
     })
@@ -201,7 +237,7 @@ describe('householdPlan with a time-varying income (Lisa starts in September)', 
 
   it('does not step once the start month has arrived', () => {
     const afterStart = new Date(2026, 9, 1) // October 1, 2026
-    const plan = householdPlan({ settings: {}, ...base, incomes: stepped, today: afterStart })
+    const plan = householdPlan({ settings: {}, ...base, fixed: fixedNoHouse, incomes: stepped, today: afterStart })
     expect(plan.incomeMonthly).toBe(17200)
     expect(plan.incomeStepDate).toBeNull()
     expect(plan.houseContributionSchedule).toEqual({ monthlyNow: 9850 })

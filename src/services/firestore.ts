@@ -74,3 +74,19 @@ export async function getBudgetTemplate(): Promise<BudgetTarget | null> {
 export async function setBudgetTemplate(byCategoryId: Record<string, number>): Promise<void> {
   await setDoc(docRef('budget', 'template'), { byCategoryId }, { merge: true })
 }
+
+// Patch one category's budget via a dotted field path, so two quick edits to different
+// categories never clobber each other with a stale full map read from the cache. A
+// brand-new household has no template doc yet, so not-found falls back to creating it
+// with just this key (setDoc merge deep-merges, leaving other keys untouched).
+export async function setBudgetCategory(categoryId: string, amount: number): Promise<void> {
+  try {
+    await updateDoc(docRef('budget', 'template'), { [`byCategoryId.${categoryId}`]: amount })
+  } catch (error) {
+    if ((error as { code?: string }).code === 'not-found') {
+      await setDoc(docRef('budget', 'template'), { byCategoryId: { [categoryId]: amount } }, { merge: true })
+      return
+    }
+    throw error
+  }
+}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { doc, onSnapshot } from 'firebase/firestore'
 import { useQueryClient } from '@tanstack/react-query'
 import { db } from '../config/firebase'
@@ -116,19 +116,19 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
   }, [uid, email, queryClient])
 
   const loading = status === 'loading' || status === 'bootstrapping' || status === 'joining'
-  return (
-    <HouseholdContext.Provider
-      value={{
-        household: status === 'denied' ? null : household,
-        status,
-        loading,
-        bootstrapping: status === 'bootstrapping',
-        joining: status === 'joining',
-        denied: status === 'denied',
-        error,
-      }}
-    >
-      {children}
-    </HouseholdContext.Provider>
+  // Memoized so a parent re-render (the drawer opening, a resize) does not hand every
+  // consumer a fresh context value and re-render the whole tree for nothing.
+  const value = useMemo(
+    () => ({
+      household: status === 'denied' ? null : household,
+      status,
+      loading,
+      bootstrapping: status === 'bootstrapping',
+      joining: status === 'joining',
+      denied: status === 'denied',
+      error,
+    }),
+    [household, status, loading, error],
   )
+  return <HouseholdContext.Provider value={value}>{children}</HouseholdContext.Provider>
 }

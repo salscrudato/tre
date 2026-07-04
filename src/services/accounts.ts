@@ -1,4 +1,4 @@
-import { deleteField, increment, orderBy, updateDoc } from 'firebase/firestore'
+import { deleteField, orderBy, updateDoc } from 'firebase/firestore'
 import type { Account } from '../types'
 import { createInCol, docRef, listCol, removeFromCol, updateInCol } from './firestore'
 
@@ -33,8 +33,3 @@ export async function unlinkAccountFromPlaid(id: string): Promise<void> {
   await updateDoc(docRef(NAME, id), { plaidAccountId: deleteField() })
 }
 
-// Atomic balance change (a savings contribution lands on the account), so concurrent
-// logs from either spouse never overwrite each other with a stale read.
-export async function creditAccount(id: string, delta: number): Promise<void> {
-  await updateDoc(docRef(NAME, id), { balance: increment(delta) })
-}

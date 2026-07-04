@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compactScale, formatCurrency, formatCurrencyCompact, titleCase } from './format'
+import { compactScale, formatCurrency, formatCurrencyCompact, groupAmount, parseAmount, titleCase } from './format'
 
 describe('formatCurrency', () => {
   it('shows thousands separators and cents by default', () => {
@@ -56,5 +56,30 @@ describe('titleCase', () => {
     expect(titleCase(undefined)).toBe('')
     expect(titleCase(null)).toBe('')
     expect(titleCase('')).toBe('')
+  })
+})
+
+describe('groupAmount and parseAmount', () => {
+  it('groups thousands live as you type', () => {
+    expect(groupAmount('2221')).toBe('2,221')
+    expect(groupAmount('6400')).toBe('6,400')
+    expect(groupAmount('1234567.89')).toBe('1,234,567.89')
+    expect(groupAmount('950')).toBe('950')
+  })
+  it('accepts commas already typed and regroups them correctly', () => {
+    expect(groupAmount('2,221')).toBe('2,221')
+    expect(groupAmount('22,21')).toBe('2,221')
+    expect(groupAmount('$6,400.50')).toBe('6,400.50')
+  })
+  it('preserves a trailing dot and partial cents while typing', () => {
+    expect(groupAmount('2221.')).toBe('2,221.')
+    expect(groupAmount('2221.5')).toBe('2,221.5')
+    expect(groupAmount('2221.505')).toBe('2,221.50')
+  })
+  it('parses grouped input to the exact number', () => {
+    expect(parseAmount('2,221')).toBe(2221)
+    expect(parseAmount('6,400.50')).toBe(6400.5)
+    expect(parseAmount('$1,234,567.89')).toBe(1234567.89)
+    expect(Number.isNaN(parseAmount(''))).toBe(true)
   })
 })

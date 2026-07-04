@@ -1,24 +1,26 @@
-// Canonical seed data for Tre: the single source of truth for the couple's real
-// numbers. Both the first-run bootstrap (src/services/bootstrap.ts) and the live
-// migration (scripts/migrate-2026-07.ts) import from here, so the app and the
-// production database can never drift apart.
+// First-run bootstrap seed for Tre. src/services/bootstrap.ts writes this data only
+// when the household document is missing (a brand new database); the seeded settings,
+// including the 250000 downPaymentTarget, come verbatim from DEFAULTS in
+// src/config/app.ts. After that first run the live Firestore database is the source
+// of truth: the couple edits bills, budgets, incomes, goals, and accounts in the app,
+// so the live numbers move away from this file over time. Never treat this seed as a
+// mirror of production; keep it consistent with itself (the one-time scripts under
+// scripts/ that import from here rely on that).
 //
-// The money model:
-//   Fixed bills total 7646/month across the six fixed categories (Housing 4050,
+// The money model, as this seed's own data computes it:
+//   The bills in the six fixed categories total 7696/month (Housing 4100,
 //   Childcare 1900, Transportation 535, Debt 541, Utilities 470, Insurance 150).
-//   The discretionary budget totals 2493/month across the six variable categories
-//   (Subscriptions 158, Groceries 1000, Dining 625, Personal Care 50, Health 60,
-//   Other 600). Income is 12500/month (Sal, 6250 semimonthly) until September 2026,
-//   when Lisa's teaching pay starts (2350 semimonthly) and income becomes 17200.
-//   Surplus: 12500 - 7646 - 2493 = 2361 until September 2026, then
-//   17200 - 7646 - 2493 = 7061.
-//   The flagged accounts sum to exactly the 250000 down payment goal:
-//   House 132449.28 + Cash 16000 + Lisa 6000 + the Build Wealth house slice
-//   95550.72 = 250000.00 (Self Directed never counts).
-//
-// The migration's verification pass asserts these sums in code (fixed bills 7646,
-// discretionary 2493, flagged house total 250000) and fails on any drift.
+//   The variable (discretionary) category budgets total 2493/month (Subscriptions
+//   158, Groceries 1000, Dining 625, Personal Care 50, Health 60, Other 600).
+//   Income is 17200/month (Sal 6250 and Lisa 2350, both semimonthly), counted
+//   from now.
+//   Surplus: 17200 - 7696 - 2493 = 7011.
+//   The flagged accounts (countsTowardHouse, with Build Wealth clamped to its
+//   houseAllocation slice) sum to House 132449.28 + Cash 16000 + Build Wealth slice
+//   95550.72 + Lisa 6000 = 250000.00, exactly the 250000 down payment goal, which is
+//   why goal_house.current below is computed from them instead of typed in.
 
+import { houseSavingsFromAccounts } from '../lib/accounts'
 import type { Account, BudgetTarget, Category, FixedExpense, Goal, Income } from '../types'
 
 export const SEED_CATEGORIES: Category[] = [
@@ -37,11 +39,15 @@ export const SEED_CATEGORIES: Category[] = [
   { id: 'cat_savings', name: 'House Savings', type: 'savings', icon: 'leaf', color: '#147A45', order: 12 },
 ]
 
-// Every recurring bill. The bills in the six fixed categories sum to 7646/month.
-// Subscription and grocery bills live inside their variable budgets, not the 7646.
-// The two house transfers are the automatic contributions to the down payment goal.
+// Every recurring bill. The bills in the six fixed categories sum to 7696/month.
+// Subscription bills live inside their variable budgets, not the 7696. Grocery
+// charges (Butcher Box included) are logged when they happen, never seeded as bills:
+// spending counts only what the couple logs. The two named house transfers (House
+// Savings - Sal at 5000 and House Savings - Lisa at 1000) are the automatic
+// contributions to the down payment goal; they alone drive the house pace
+// (lib/plan.ts), and the surplus beyond them reads as not yet committed.
 export const SEED_FIXED: FixedExpense[] = [
-  { id: 'fx_rent', name: 'Rent', amount: 4050, categoryId: 'cat_housing', dueDay: 1, owner: 'Sal', active: true },
+  { id: 'fx_rent', name: 'Rent', amount: 4100, categoryId: 'cat_housing', dueDay: 1, owner: 'Sal', active: true },
   { id: 'fx_daycare', name: 'Daycare', amount: 1900, categoryId: 'cat_childcare', dueDay: 1, owner: 'Sal', active: true },
   { id: 'fx_car', name: 'Car (Tesla)', amount: 525, categoryId: 'cat_transportation', dueDay: 1, owner: 'Sal', active: true },
   { id: 'fx_teslasub', name: 'Tesla Subscription', amount: 10, categoryId: 'cat_transportation', dueDay: 21, owner: 'Sal', active: true },
@@ -57,14 +63,13 @@ export const SEED_FIXED: FixedExpense[] = [
   { id: 'fx_peloton', name: 'Peloton', amount: 25, categoryId: 'cat_subscriptions', dueDay: 19, owner: 'Lisa', active: true },
   { id: 'fx_netflix', name: 'Netflix', amount: 20, categoryId: 'cat_subscriptions', dueDay: 23, owner: 'Lisa', active: true },
   { id: 'fx_icloud', name: 'iCloud+', amount: 2.99, categoryId: 'cat_subscriptions', dueDay: 26, owner: 'Lisa', active: true },
-  { id: 'fx_butcherbox', name: 'Butcher Box', amount: 306, categoryId: 'cat_groceries', dueDay: 21, owner: 'Lisa', active: true },
-  { id: 'fx_house1', name: 'House Savings 1', amount: 400, categoryId: 'cat_savings', dueDay: 15, owner: 'Lisa', active: true, goalId: 'goal_house' },
-  { id: 'fx_house2', name: 'House Savings 2', amount: 400, categoryId: 'cat_savings', dueDay: 30, owner: 'Lisa', active: true, goalId: 'goal_house' },
+  { id: 'fx_savings_sal', name: 'House Savings - Sal', amount: 5000, categoryId: 'cat_savings', dueDay: 15, owner: 'Sal', active: true, goalId: 'goal_house', lever: 'savings', note: 'Automatic monthly transfer into the house fund.' },
+  { id: 'fx_savings_lisa', name: 'House Savings - Lisa', amount: 1000, categoryId: 'cat_savings', dueDay: 15, owner: 'Lisa', active: true, goalId: 'goal_house', lever: 'savings', note: 'Automatic monthly transfer into the house fund.' },
 ]
 
 export const SEED_INCOMES: Income[] = [
   { id: 'inc_sal', name: 'Accenture', owner: 'Sal', netPerPaycheck: 6250, frequency: 'semimonthly', payDays: [15, 30], note: 'Net take-home after taxes, 401k, benefits.' },
-  { id: 'inc_lisa', name: 'Ridgewood Public Schools', owner: 'Lisa', netPerPaycheck: 2350, frequency: 'semimonthly', payDays: [15, 30], startMonth: '2026-09-01', note: 'Pay starts in September 2026. Net after pension, taxes, family insurance.' },
+  { id: 'inc_lisa', name: 'Ridgewood Public Schools', owner: 'Lisa', netPerPaycheck: 2350, frequency: 'semimonthly', payDays: [15, 30], note: 'Net after pension, taxes, family insurance. Counted from now.' },
 ]
 
 // The flagged accounts (countsTowardHouse, with Build Wealth clamped to its
@@ -78,14 +83,18 @@ export const SEED_ACCOUNTS: Account[] = [
   { id: 'acct_lisa', name: 'Lisa', type: 'cash', balance: 6000, countsTowardHouse: true, note: 'Held outside Betterment, entered manually.' },
 ]
 
+// current is computed from the seed's own flagged accounts so it can never go stale
+// here. The app always derives the live figure from the flagged accounts
+// (lib/accounts.ts); this stored value only matters until the account docs exist.
 export const SEED_GOALS: Goal[] = [
-  { id: 'goal_house', name: 'House Down Payment', target: 250000, current: 250000, targetDate: '2028-01-31', color: '#1FA85A', priority: 1, note: 'Derived from the flagged accounts: House, Cash, Lisa, and the Build Wealth slice.' },
+  { id: 'goal_house', name: 'House Down Payment', target: 250000, current: houseSavingsFromAccounts(SEED_ACCOUNTS), targetDate: '2028-01-31', color: '#1FA85A', priority: 1, note: 'Derived from the flagged accounts: House, Cash, Lisa, and the Build Wealth slice.' },
 ]
 
 // The budget template. Fixed lines equal their bills exactly; the variable lines
-// (the discretionary budget) total 2493; savings is the two house transfers.
+// (the discretionary budget) total 2493; savings is the two named house transfers
+// (5000 + 1000).
 export const SEED_BUDGET: BudgetTarget['byCategoryId'] = {
-  cat_housing: 4050,
+  cat_housing: 4100,
   cat_childcare: 1900,
   cat_transportation: 535,
   cat_debt: 541,
@@ -97,32 +106,6 @@ export const SEED_BUDGET: BudgetTarget['byCategoryId'] = {
   cat_personal: 50,
   cat_health: 60,
   cat_other: 600,
-  cat_savings: 800,
+  cat_savings: 6000,
 }
 
-// Maps the old live per-merchant category ids to the 13 canonical categories, for
-// remapping existing transactions. Any id not listed here (and not already one of
-// the 13) remaps to cat_other.
-export const CATEGORY_REMAP: Record<string, string> = {
-  cat_rent: 'cat_housing',
-  cat_daycare: 'cat_childcare',
-  cat_car: 'cat_transportation',
-  cat_teslasub: 'cat_transportation',
-  cat_studentloans: 'cat_debt',
-  cat_mattress: 'cat_debt',
-  cat_att: 'cat_utilities',
-  cat_pseg: 'cat_utilities',
-  cat_verizon: 'cat_utilities',
-  cat_water: 'cat_utilities',
-  cat_geico: 'cat_insurance',
-  cat_nespresso: 'cat_subscriptions',
-  cat_netflix: 'cat_subscriptions',
-  cat_peacock: 'cat_subscriptions',
-  cat_peloton: 'cat_subscriptions',
-  cat_icloud: 'cat_subscriptions',
-  cat_starbucks: 'cat_dining',
-  cat_wax: 'cat_personal',
-  cat_therapy: 'cat_health',
-  cat_teslacharging: 'cat_other',
-  cat_ezpass: 'cat_other',
-}

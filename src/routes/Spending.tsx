@@ -1,188 +1,142 @@
-import { useMemo, useState } from 'react'
-import { ChevronLeftIcon, ChevronRightIcon, SparkleIcon } from '../components/icons/ui'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useHousehold } from '../hooks/useHousehold'
+import { ChevronLeftIcon, ChevronRightIcon, SparkleIcon } from '../components/icons/ui'
+import { TagIcon } from '../components/icons/nav'
 import { useCategories } from '../hooks/useCategories'
 import { useBudget } from '../hooks/useBudget'
-import { useIncomes } from '../hooks/useIncomes'
-import { useGoals } from '../hooks/useGoals'
 import { useFixed } from '../hooks/useFixed'
-import { useAccounts } from '../hooks/useAccounts'
 import { useTransactions } from '../hooks/useTransactions'
 import { useToday } from '../hooks/useToday'
-import { monthsToReach, monthsToReachWithSchedule, type ContributionSchedule } from '../lib/money'
-import { houseContext } from '../lib/house'
-import { householdPlan, type HouseholdPlan } from '../lib/plan'
-import { buildBudgetView, savingsRateMonthly, type BudgetGroup, type CategoryRow } from '../lib/budget'
-import { addMonths, billActiveOn, isoDate, monthBounds, monthlyNetIncome, yearBounds } from '../lib/summary'
-import { formatCurrency, formatDate, formatPercent, titleCase } from '../lib/format'
+import { buildBudgetView, isCountedSpend, type BudgetGroup, type CategoryRow } from '../lib/budget'
+import { isoDate, monthBounds, yearBounds } from '../lib/summary'
+import { formatCurrency, formatDate, titleCase } from '../lib/format'
 import { cn } from '../lib/cn'
-import { DEFAULTS } from '../config/app'
 import { Card } from '../components/Card'
 import { Segmented } from '../components/Segmented'
-import { Explain } from '../components/Explain'
 import { ProgressBar } from '../components/ProgressBar'
-import { GoalRing } from '../components/GoalRing'
 import { Money } from '../components/Money'
-import { Stat } from '../components/Stat'
 import { Spinner } from '../components/Spinner'
 import { RecentTransactions } from '../components/RecentTransactions'
-import type { Category } from '../types'
+import type { Category, MemberName } from '../types'
 
+// Spending: a month's actual spending by category against the plan, and nothing else.
+// No income (that lives on the Income page). One month at a time: the switcher rescopes
+// the whole page, so the headline, the category bars, and the ledger always agree. The
+// headline answers the one question first (how much of the budget is spent and how much
+// is left), then each spending category shows spent against its budget with a bar,
+// biggest first, overages flagged. The owner toggle scopes it to Sal, Lisa, or both.
 export default function Spending() {
-  const { household } = useHousehold()
-  const settings = household?.settings
   const { categories, isLoading: categoriesLoading, isError: categoriesError } = useCategories()
   const { byCategoryId } = useBudget()
-  const { incomes } = useIncomes()
-  const { goals, isLoading: goalsLoading, isError: goalsError } = useGoals()
   const { fixed } = useFixed()
-  const { accounts } = useAccounts()
-
   const today = useToday()
+
   const [selectedMonth, setSelectedMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1))
   const [categoryFilter, setCategoryFilter] = useState('all')
-
-  const mtdTx = useTransactions(monthBounds(today))
-  const ytdTx = useTransactions(yearBounds(today))
-  const history = useTransactions(monthBounds(selectedMonth))
-
-  const houseGoalId = useMemo(
-    () => goals.find((g) => g.name.toLowerCase().includes('house'))?.id ?? null,
-    [goals],
-  )
-  // The reconciled plan drives the per-person view and the surplus-based house pace.
-  const plan = useMemo(
-    () =>
-      settings
-        ? householdPlan({ settings, incomes, fixed, categories, byCategoryId, houseGoalId, today })
-        : null,
-    [settings, incomes, fixed, categories, byCategoryId, houseGoalId, today],
-  )
-  const house = useMemo(
-    () =>
-      settings ? houseContext(settings, goals, fixed, today, accounts, plan?.houseContributionSchedule) : null,
-    [settings, goals, fixed, today, accounts, plan?.houseContributionSchedule],
-  )
-
-  const downReturn = settings?.downPaymentReturnAssumption ?? DEFAULTS.downPaymentReturnAssumption
-  // The general (non-de-risked) return for goals other than the house down payment.
-  const generalReturn = settings?.assumedAnnualReturn ?? DEFAULTS.assumedAnnualReturn
-  // Current income (Lisa's pay starts in September), so the savings rate reflects today.
-  const income = plan?.incomeMonthly ?? monthlyNetIncome(incomes)
-
-  // The single budget view: Spent counts only logged transactions, grouped by type.
-  const view = useMemo(
-    () => buildBudgetView(categories, fixed, byCategoryId, mtdTx.transactions, ytdTx.transactions),
-    [categories, fixed, byCategoryId, mtdTx.transactions, ytdTx.transactions],
-  )
-
-  // The one annual discretionary number, used everywhere: the budget for the time that
-  // has actually elapsed this year, with the current month prorated by the day so the
-  // budget and the spend it is compared against cover the same window (no phantom full
-  // month of headroom early in the month). Never the inflated times-twelve figure.
-  const daysInThisMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
-  const elapsedMonths = today.getMonth() + today.getDate() / daysInThisMonth
-  const discYearToDateBudget = view.discMonthBudget * elapsedMonths
-
-  // One quiet door to Optimize when the month is already over budget or trending over
-  // (the same pace projection the summary shows). An invitation, never an alarm.
-  const projectedMonthSpend =
-    today.getDate() > 0
-      ? (view.discretionary.monthSpent * daysInThisMonth) / today.getDate()
-      : view.discretionary.monthSpent
-  const showWaysToSave =
-    view.discMonthBudget > 0 &&
-    (view.discretionary.monthSpent > view.discMonthBudget || projectedMonthSpend > view.discMonthBudget)
-
-  // Savings rate from the one shared definition, so Home, Spending, and Optimize agree.
-  const savingsRate = useMemo(
-    () => savingsRateMonthly(income, fixed, categories, mtdTx.transactions),
-    [income, fixed, categories, mtdTx.transactions],
-  )
-
-  // The house goal's projected date uses our real monthly contribution (the surplus), so
-  // the savings ring matches the House tab instead of the small auto-transfer line.
-  const contributionByGoal = useMemo(() => {
-    const map = savingsContribution(fixed, today)
-    if (houseGoalId && plan) map.set(houseGoalId, plan.houseContributionMonthly)
-    return map
-  }, [fixed, houseGoalId, plan, today])
-
-  // The cash portion of our house savings (counts toward the house now; we rebuild a
-  // buffer after we buy). Uses the same counted amount as the house meter.
-  const houseCash = house?.houseSavingsCash ?? 0
-
-  const filteredHistory =
-    categoryFilter === 'all'
-      ? history.transactions
-      : history.transactions.filter((tx) => tx.categoryId === categoryFilter)
+  const [scope, setScope] = useState<'combined' | MemberName>('combined')
+  const person = scope === 'combined' ? null : scope
+  // The month ledger can hold dozens of rows; cap it and offer a Show all expander so the
+  // page is not a wall of DOM. A fresh month, filter, or scope starts collapsed again.
+  const [showAll, setShowAll] = useState(false)
+  useEffect(() => setShowAll(false), [selectedMonth, categoryFilter, scope])
 
   const atCurrentMonth =
     selectedMonth.getFullYear() === today.getFullYear() && selectedMonth.getMonth() === today.getMonth()
+  // "this month" only when it is the current month; otherwise name the month, so copy
+  // never claims "this month" while a past month is selected.
+  const monthLabel = atCurrentMonth ? 'this month' : `in ${formatDate(isoDate(selectedMonth), 'month')}`
 
-  const periodLoading = mtdTx.isLoading || ytdTx.isLoading
-  const periodError = mtdTx.isError || ytdTx.isError
+  // One query drives the whole page: the headline, the category bars, and the ledger all
+  // read the selected month, so switching months moves everything together.
+  const monthTx = useTransactions(monthBounds(selectedMonth))
+  const scopedTx = useMemo(
+    () => (person ? monthTx.transactions.filter((tx) => tx.createdBy === person) : monthTx.transactions),
+    [monthTx.transactions, person],
+  )
+
+  const view = useMemo(
+    () => buildBudgetView(categories, fixed, byCategoryId, scopedTx, scopedTx, selectedMonth),
+    [categories, fixed, byCategoryId, scopedTx, selectedMonth],
+  )
+
+  const spent = view.discretionary.monthSpent
+  const budget = view.discMonthBudget
+
+  // A second, always-current-year query (independent of the month stepper) powers the
+  // quiet "This year" rollup toward the dated goal. buildBudgetView is month-scoped, so
+  // compute the year discretionary spend straight from the counted variable-category rows.
+  const yearTx = useTransactions(yearBounds(today))
+  const yearDiscSpent = useMemo(() => {
+    const typeById = new Map(categories.map((c) => [c.id, c.type]))
+    return yearTx.transactions
+      .filter((t) => isCountedSpend(t) && typeById.get(t.categoryId) === 'variable')
+      .reduce((sum, t) => sum + t.amount, 0)
+  }, [yearTx.transactions, categories])
+
+  // The month-end projection is a naive linear extrapolation, so a single early purchase
+  // balloons it. Only trust it once about a fifth of the month has elapsed; before that the
+  // day count and the per-day allowance are the honest early guidance.
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
+  const dayOfMonth = today.getDate()
+  const projected = dayOfMonth > 0 ? (spent * daysInMonth) / dayOfMonth : spent
+  const paceMeaningful = atCurrentMonth && dayOfMonth >= 5
+
+  // One quiet door to Optimize: an actual overage opens it any day, a projected overage
+  // only once the pace is meaningful (so a first-of-the-month coffee never triggers it).
+  const showWaysToSave =
+    atCurrentMonth && !person && budget > 0 && (spent > budget || (paceMeaningful && projected > budget))
+
+  const filteredHistory = useMemo(
+    () => (categoryFilter === 'all' ? scopedTx : scopedTx.filter((tx) => tx.categoryId === categoryFilter)),
+    [scopedTx, categoryFilter],
+  )
+
+  const loading = monthTx.isLoading
+  const error = monthTx.isError
 
   return (
     <div className="flex flex-col gap-6">
       <h1 className="sr-only">Spending</h1>
-      {plan && <TeamMoney plan={plan} />}
 
-      <Card title="Where we are">
-        {periodLoading ? (
-          <Loading label="Loading your numbers" />
-        ) : periodError ? (
-          <ErrorLine label="Could not load this period. Check your connection." />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Segmented
+          value={scope}
+          onChange={setScope}
+          ariaLabel="Combined or per person"
+          options={[
+            { value: 'combined', label: 'Combined' },
+            { value: 'Sal', label: 'Sal' },
+            { value: 'Lisa', label: 'Lisa' },
+          ]}
+        />
+        <MonthStepper
+          month={selectedMonth}
+          atCurrentMonth={atCurrentMonth}
+          onPrev={() => setSelectedMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+          onNext={() => setSelectedMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+        />
+      </div>
+
+      <Card padded={false} className="glow-accent hero-tint p-6 sm:p-7">
+        {loading ? (
+          <Loading label="Loading this month" />
+        ) : error ? (
+          <ErrorLine label="Could not load this month. Check your connection." />
         ) : (
-          <div className="flex flex-col gap-5">
-            {/* The plainest budget answer first: how much left our hands this month, the
-                committed fixed bills plus what we have logged. The discretionary detail,
-                where the budget bar applies, sits below. */}
-            <div className="flex flex-col gap-0.5">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-callout font-medium text-ink">Out this month</span>
-                <Money amount={view.committedFixedMonthly + view.discretionary.monthSpent} size="lg" cents={false} />
-              </div>
-              <span className="text-caption text-muted">
-                <span className="tnum">{formatCurrency(view.committedFixedMonthly, { cents: false })}</span> fixed plus{' '}
-                <span className="tnum">{formatCurrency(view.discretionary.monthSpent, { cents: false })}</span> spent
-              </span>
-            </div>
-            {/* The discretionary detail deliberately shows discretionary spend (not the
-                all-logged grand total) so spent and the budget bar describe the same set. */}
-            <div className="border-t border-line pt-5">
-              <PeriodSummary
-                label="This month"
-                spent={view.discretionary.monthSpent}
-                budget={view.discMonthBudget}
-                dateLabel={formatDate(isoDate(today), 'month')}
-                today={today}
-                pace
-              />
-            </div>
-            <div className="border-t border-line pt-5">
-              <PeriodSummary
-                label="This year"
-                spent={view.discretionary.yearSpent}
-                budget={discYearToDateBudget}
-                dateLabel={`${today.getFullYear()} so far`}
-                remainingLabel="under plan so far"
-                overLabel="over plan"
-              />
-            </div>
-            <div className="flex items-end justify-between gap-4 border-t border-line pt-4">
-              <Stat label="Our savings rate" value={formatPercent(savingsRate)} />
-              <div className="flex flex-col items-end gap-0.5">
-                <span className="text-caption text-muted">Fixed bills each month</span>
-                <Money amount={view.committedFixedMonthly} size="lg" cents={false} />
-              </div>
-            </div>
-          </div>
+          <Headline
+            spent={spent}
+            budget={budget}
+            today={today}
+            projected={projected}
+            paceMeaningful={paceMeaningful}
+            atCurrentMonth={atCurrentMonth}
+            person={person}
+            monthLabel={monthLabel}
+          />
         )}
       </Card>
 
-      {!periodLoading && !periodError && showWaysToSave && (
+      {showWaysToSave && (
         <Link
           to="/optimize"
           aria-label="Ways to save"
@@ -205,112 +159,80 @@ export default function Spending() {
         </Link>
       )}
 
-      <Card title="Discretionary">
-        {categoriesLoading || periodLoading ? (
+      <Card title={person ? `What ${person} spent` : 'By category'}>
+        {categoriesLoading || loading ? (
           <Loading label="Loading categories" />
-        ) : categoriesError || periodError ? (
+        ) : categoriesError || error ? (
           <ErrorLine label="Could not load categories. Check your connection." />
-        ) : view.discretionary.rows.length === 0 ? (
-          <Empty label="No discretionary categories yet. Add some in settings." />
         ) : (
-          <SpendGroup group={view.discretionary} />
+          <div className="flex flex-col gap-6">
+            <SpendGroup group={view.discretionary} person={person} monthLabel={monthLabel} />
+            {/* Bills, in a household view: the logged actual charge against each bill
+                category, compared with its planned amount, since the real numbers vary a
+                little month to month. Combined only, since a bill is a shared cost. */}
+            {!person && <BillsGroup group={view.fixed} />}
+          </div>
         )}
       </Card>
 
-      <Card
-        title="Fixed costs"
-        action={
-          <Link
-            to="/bills"
-            className="inline-flex min-h-11 items-center rounded-md px-2 text-caption text-accent-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-          >
-            Manage bills
-          </Link>
-        }
-      >
-        {categoriesLoading ? (
-          <Loading label="Loading bills" />
-        ) : view.fixed.rows.every((r) => r.bills.length === 0) ? (
-          <Empty label="No fixed bills yet. Add them in settings." />
-        ) : (
-          <FixedGroup group={view.fixed} />
-        )}
-      </Card>
-
-      <Card title="Savings">
-        {goalsLoading ? (
-          <Loading label="Loading savings" />
-        ) : goalsError ? (
-          <ErrorLine label="Could not load savings. Check your connection." />
-        ) : goals.length === 0 && view.committedSavingsMonthly === 0 && view.savings.monthBudget === 0 ? (
-          <Empty label="No savings goals yet. Add one in settings." />
-        ) : (
-          <SavingsGroup
-            committedMonthly={view.committedSavingsMonthly}
-            houseContribution={plan?.houseContributionMonthly ?? 0}
-            houseContributionLater={plan?.houseContributionLater ?? 0}
-            incomeStepLabel={plan?.incomeStepDate ? formatDate(plan.incomeStepDate, 'month') : null}
-            houseCash={houseCash}
-            goals={goals}
-            houseGoalId={house?.houseGoal.id ?? null}
-            houseSavings={house?.houseSavings ?? null}
-            houseSchedule={house?.baselineSchedule ?? null}
-            today={today}
-            downReturn={downReturn}
-            generalReturn={generalReturn}
-            contributionByGoal={contributionByGoal}
-          />
-        )}
-      </Card>
+      {/* A quiet cumulative look at the calendar year toward the dated goal. Combined view
+          only, since the everyday budget is shared, and always the current year (the month
+          stepper never rescopes it). */}
+      {!person && !yearTx.isLoading && <YearGlance spent={yearDiscSpent} monthBudget={budget} today={today} />}
 
       <section>
-        <h2 className="mb-2 px-1 text-h3 text-ink">History</h2>
+        <h2 className="mb-2 px-1 text-h3 text-ink">
+          {atCurrentMonth ? 'This month' : formatDate(isoDate(selectedMonth), 'month')}
+        </h2>
         <Card padded={false} className="overflow-hidden">
-          <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setSelectedMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
-                aria-label="Previous month"
-                className="inline-flex h-11 w-11 items-center justify-center rounded-pill text-ink-2 transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-              >
-                <ChevronLeftIcon size={18} aria-hidden="true" />
-              </button>
-              <span className="min-w-[110px] text-center text-callout font-medium text-ink">
-                {formatDate(isoDate(selectedMonth), 'month')}
-              </span>
-              <button
-                type="button"
-                disabled={atCurrentMonth}
-                onClick={() => setSelectedMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
-                aria-label="Next month"
-                className="inline-flex h-11 w-11 items-center justify-center rounded-pill text-ink-2 transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-40"
-              >
-                <ChevronRightIcon size={18} aria-hidden="true" />
-              </button>
-            </div>
+          <div className="flex items-center justify-end gap-2 border-b border-line px-3 py-2">
             <CategoryFilter value={categoryFilter} onChange={setCategoryFilter} categories={categories} />
           </div>
 
           <div className="px-2 py-2">
-            {history.isLoading ? (
+            {loading ? (
               <Loading label="Loading transactions" />
-            ) : history.isError ? (
+            ) : error ? (
               <ErrorLine label="Could not load transactions. Check your connection." />
             ) : filteredHistory.length === 0 ? (
-              <Empty label="No expenses logged this month yet. Tap the plus button to log one." />
-            ) : (
-              <RecentTransactions
-                transactions={filteredHistory}
-                categories={categories}
-                onUpdate={(id, patch) => history.update.mutate({ id, patch })}
-                onDelete={(id) => history.remove.mutate(id)}
-                showHouseGivenUp={house != null}
+              <Empty
+                label={
+                  categoryFilter !== 'all' && scopedTx.length > 0
+                    ? `Nothing in this category ${monthLabel}. Pick another, or All categories.`
+                    : `No expenses logged ${monthLabel} yet. Log one from the Home screen.`
+                }
               />
+            ) : (
+              <>
+                <RecentTransactions
+                  transactions={showAll ? filteredHistory : filteredHistory.slice(0, 25)}
+                  categories={categories}
+                  onUpdate={(tx, patch) => monthTx.update.mutate({ tx, patch })}
+                  onDelete={(tx) => monthTx.remove.mutate(tx)}
+                  showHouseGivenUp={false}
+                />
+                {!showAll && filteredHistory.length > 25 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAll(true)}
+                    className="mt-1 min-h-11 w-full rounded-md text-callout font-medium text-accent-strong transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+                  >
+                    Show all {filteredHistory.length} expenses
+                  </button>
+                )}
+              </>
             )}
           </div>
         </Card>
       </section>
+
+      <Link
+        to="/plan"
+        className="inline-flex min-h-11 w-fit items-center gap-1.5 self-center rounded-pill px-4 text-callout font-medium text-accent-strong transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+      >
+        <TagIcon size={16} strokeWidth={2} aria-hidden="true" />
+        Plan a purchase
+      </Link>
     </div>
   )
 }
@@ -330,214 +252,206 @@ function Empty({ label }: { label: string }) {
   return <p className="py-8 text-center text-callout text-muted">{label}</p>
 }
 
-// Our money, combined by default, one tap to each person's share. Framed as teammates
-// building the same home: income in and the amount headed for the house, never two
-// ledgers competing. The per-person split is by income share, since the money is pooled.
-function TeamMoney({ plan }: { plan: HouseholdPlan }) {
-  const [mode, setMode] = useState<'combined' | 'person'>('combined')
+// A compact month stepper. Next is disabled at the current month (there is no future
+// spending to show). Drives the whole page.
+function MonthStepper({
+  month,
+  atCurrentMonth,
+  onPrev,
+  onNext,
+}: {
+  month: Date
+  atCurrentMonth: boolean
+  onPrev: () => void
+  onNext: () => void
+}) {
   return (
-    <Card title="Our money">
-      <div className="flex flex-col gap-4">
-        <Segmented
-          value={mode}
-          onChange={setMode}
-          ariaLabel="Combined or per person"
-          className="self-start"
-          options={[
-            { value: 'combined', label: 'Combined' },
-            { value: 'person', label: 'Per person' },
-          ]}
-        />
-        {mode === 'combined' ? (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-callout text-ink-2">Household income</span>
-              <Money amount={plan.incomeMonthly} cents={false} />
-            </div>
-            <div className="flex items-center justify-between gap-3 border-t border-line pt-3">
-              <span className="text-callout font-medium text-ink">Toward our home</span>
-              <Money amount={plan.houseContributionMonthly} size="lg" tone="positive" cents={false} />
-            </div>
-            <p className="text-caption text-muted">
-              {plan.houseContributionIsSurplus
-                ? 'Our real monthly surplus, all of it building the home.'
-                : 'Our chosen monthly house contribution.'}
-            </p>
-            {plan.incomeStepDate && (
-              <p className="text-caption text-muted">
-                From {formatDate(plan.incomeStepDate, 'month')}, both incomes apply:{' '}
-                <span className="tnum">{formatCurrency(plan.incomeMonthlyLater, { cents: false })}</span> a month in, about{' '}
-                <span className="tnum">{formatCurrency(plan.houseContributionLater, { cents: false })}</span> toward our home.
-              </p>
-            )}
+    <div className="flex shrink-0 items-center gap-1">
+      <button
+        type="button"
+        onClick={onPrev}
+        aria-label="Previous month"
+        className="inline-flex h-11 w-11 items-center justify-center rounded-pill text-ink-2 transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+      >
+        <ChevronLeftIcon size={18} aria-hidden="true" />
+      </button>
+      <span className="min-w-[104px] text-center text-callout font-medium text-ink">{formatDate(isoDate(month), 'month')}</span>
+      <button
+        type="button"
+        disabled={atCurrentMonth}
+        onClick={onNext}
+        aria-label="Next month"
+        className="inline-flex h-11 w-11 items-center justify-center rounded-pill text-ink-2 transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-40"
+      >
+        <ChevronRightIcon size={18} aria-hidden="true" />
+      </button>
+    </div>
+  )
+}
+
+// The headline: total spent this month, how much of the budget is left, and where the
+// month is trending. Pace shows only for the current month (a past month is settled). A
+// person view shows only what they spent (the budget is shared).
+function Headline({
+  spent,
+  budget,
+  today,
+  projected,
+  paceMeaningful,
+  atCurrentMonth,
+  person,
+  monthLabel,
+}: {
+  spent: number
+  budget: number
+  today: Date
+  projected: number
+  paceMeaningful: boolean
+  atCurrentMonth: boolean
+  person: MemberName | null
+  monthLabel: string
+}) {
+  const noBudget = budget <= 0
+  const left = budget - spent
+  const over = !noBudget && left < 0
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
+  const dayOfMonth = today.getDate()
+  const daysLeft = daysInMonth - dayOfMonth
+  const projectedOver = !noBudget && paceMeaningful && projected > budget
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <span className="text-caption font-semibold uppercase tracking-wide text-accent-strong">
+          {person ? `${person}'s everyday` : 'Everyday spending'}
+        </span>
+        <div className="flex items-end justify-between gap-3">
+          <Money amount={spent} size="display" cents={false} />
+          {!person && !noBudget && (
+            <span className="pb-1.5 text-callout text-ink-2">
+              of <span className="tnum">{formatCurrency(budget, { cents: false })}</span>
+            </span>
+          )}
+        </div>
+      </div>
+
+      {person ? (
+        <p className="text-caption text-muted">What {person} logged {monthLabel}. The budget is shared, so it shows in the combined view.</p>
+      ) : noBudget ? (
+        <p className="text-caption text-muted">No spending budget set yet. Set category budgets on the Budget page.</p>
+      ) : (
+        <div className="flex flex-col gap-2 border-t border-line pt-4">
+          <ProgressBar
+            value={spent}
+            max={budget}
+            showLabel={false}
+            markerPct={atCurrentMonth ? (dayOfMonth / daysInMonth) * 100 : undefined}
+          />
+          <div className="flex items-center justify-between gap-3 text-caption">
+            <span className="text-muted">
+              {over ? (
+                <>
+                  <span className="tnum text-danger">{formatCurrency(-left, { cents: false })}</span> over budget
+                </>
+              ) : (
+                <>
+                  <span className="tnum text-positive-strong">{formatCurrency(left, { cents: false })}</span>{' '}
+                  {atCurrentMonth ? 'left to spend' : 'under budget'}
+                </>
+              )}
+            </span>
+            {atCurrentMonth &&
+              (paceMeaningful ? (
+                <span className="text-muted">
+                  On pace for{' '}
+                  <span className={cn('tnum font-medium', projectedOver ? 'text-warning-strong' : 'text-positive-strong')}>
+                    {formatCurrency(projected, { cents: false })}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-muted">Too early to call the pace</span>
+              ))}
           </div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <PersonRow
-              name="Sal"
-              income={plan.incomeByMember.Sal}
-              house={plan.houseContributionByMember.Sal}
-            />
-            <div className="border-t border-line" />
-            <PersonRow
-              name="Lisa"
-              income={plan.incomeByMember.Lisa}
-              house={plan.houseContributionByMember.Lisa}
-              startsNote={
-                plan.incomeStepDate && plan.incomeByMember.Lisa === 0
-                  ? `Starts ${formatDate(plan.incomeStepDate, 'month')}`
-                  : undefined
-              }
-            />
-            <p className="text-caption text-muted">By income share, both building the same home.</p>
-          </div>
-        )}
+          {atCurrentMonth && left > 0 && daysLeft > 0 && (
+            <span className="text-caption text-muted">
+              {daysLeft} {daysLeft === 1 ? 'day' : 'days'} left, about{' '}
+              <span className="tnum">{formatCurrency(left / daysLeft, { cents: false })}</span>/day to stay on budget
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// A calm year-to-date look at everyday spending against the annualized plan, with a marker
+// where an even pace would put us today. Always the current calendar year, so the couple
+// can answer "how are we doing this year" toward the dated goal without stepping months.
+function YearGlance({ spent, monthBudget, today }: { spent: number; monthBudget: number; today: Date }) {
+  if (monthBudget <= 0) return null
+  const annual = monthBudget * 12
+  const startOfYear = new Date(today.getFullYear(), 0, 1)
+  const daysInYear = (new Date(today.getFullYear(), 11, 31).getTime() - startOfYear.getTime()) / 86_400_000 + 1
+  const dayOfYear = Math.floor((today.getTime() - startOfYear.getTime()) / 86_400_000) + 1
+  const over = spent > annual
+  return (
+    <Card title="This year">
+      <div className="flex flex-col gap-2.5">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-callout text-ink-2">Everyday spending</span>
+          <span className="tnum text-caption text-ink-2">
+            {formatCurrency(spent, { cents: false })} of {formatCurrency(annual, { cents: false })} planned
+          </span>
+        </div>
+        <ProgressBar value={spent} max={annual} showLabel={false} markerPct={(dayOfYear / daysInYear) * 100} />
+        <span className="text-caption text-muted">
+          {over ? (
+            <>
+              <span className="tnum text-danger">{formatCurrency(spent - annual, { cents: false })}</span> over the
+              year's budget
+            </>
+          ) : (
+            <>
+              <span className="tnum text-positive-strong">{formatCurrency(annual - spent, { cents: false })}</span> left
+              in the year's budget
+            </>
+          )}
+        </span>
       </div>
     </Card>
   )
 }
 
-function PersonRow({
-  name,
-  income,
-  house,
-  startsNote,
-}: {
-  name: string
-  income: number
-  house: number
-  startsNote?: string
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <div className="flex flex-col gap-0.5">
-        <span className="text-callout font-medium text-ink">{name}</span>
-        <span className="text-caption text-muted">
-          <span className="tnum">{formatCurrency(income, { cents: false })}</span> a month in
-          {startsNote ? <>, {startsNote.toLowerCase()}</> : null}
-        </span>
-      </div>
-      <div className="flex flex-col items-end gap-0.5">
-        <Money amount={house} tone="positive" cents={false} />
-        <span className="text-caption text-muted">toward our home</span>
-      </div>
-    </div>
-  )
-}
-
-// The headline for a window: spent (logged) leading, then the budget bar. Spent starts
-// at zero each month and fills only as expenses are logged.
-function PeriodSummary({
-  label,
-  spent,
-  budget,
-  dateLabel,
-  today,
-  pace = false,
-  remainingLabel = 'left to spend',
-  overLabel = 'over budget',
-}: {
-  label: string
-  spent: number
-  budget: number
-  dateLabel: string
-  // When pace is set (the current month), project the month-end spend and mark the share
-  // of the month elapsed on the bar, so the couple sees where they are trending.
-  today?: Date
-  pace?: boolean
-  // The year row compares against a prorated plan, not a hard monthly budget, so it can
-  // pass calmer wording ("under plan so far", "over plan") for the same numbers.
-  remainingLabel?: string
-  overLabel?: string
-}) {
-  // No budget set is a calm empty state, never an "over budget" alarm: show the spent
-  // figure in the default tone with a plain note, and let the bar render empty.
-  const noBudget = budget <= 0
-  const remaining = budget - spent
-  const over = !noBudget && remaining < 0
-
-  const showPace = pace && today != null && !noBudget
-  const daysInMonth = today ? new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate() : 30
-  const dayOfMonth = today ? today.getDate() : 0
-  const daysLeft = daysInMonth - dayOfMonth
-  const projected = showPace && dayOfMonth > 0 ? (spent * daysInMonth) / dayOfMonth : spent
-  const projectedOver = showPace && projected > budget
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-callout font-medium text-ink">{label}</span>
-        <span className="text-caption text-muted">{dateLabel}</span>
-      </div>
-      <div className="flex items-end justify-between gap-3">
-        <div className="flex flex-col gap-0.5">
-          <Money amount={spent} size="lg" cents={false} />
-          <span className="text-caption text-muted">spent so far</span>
-        </div>
-        <div className="flex flex-col items-end gap-0.5">
-          {noBudget ? (
-            <span className="text-caption text-muted">no budget set</span>
-          ) : (
-            <>
-              {/* Over budget shows the real overage, never a red zero. */}
-              <Money amount={Math.abs(remaining)} size="md" tone={over ? 'negative' : 'positive'} cents={false} />
-              <span className="text-caption text-muted">{over ? overLabel : remainingLabel}</span>
-            </>
-          )}
-        </div>
-      </div>
-      <ProgressBar
-        value={spent}
-        max={budget}
-        showLabel={false}
-        markerPct={showPace ? (dayOfMonth / daysInMonth) * 100 : undefined}
+// Each spending category: spent against its budget with a bar, biggest first, overages
+// flagged. In a person view the budget bars hide (the budget is shared) and rows read as
+// plain amounts, showing only categories they spent in. No total row here: the headline
+// already leads with it.
+function SpendGroup({ group, person, monthLabel }: { group: BudgetGroup; person: MemberName | null; monthLabel: string }) {
+  const rows = group.rows.filter((row) => !person || row.monthSpent > 0)
+  if (rows.length === 0) {
+    return (
+      <Empty
+        label={
+          person
+            ? `Nothing from ${person} in the spending categories ${monthLabel} yet.`
+            : 'No spending categories yet. Add some on the Budget page.'
+        }
       />
-      {showPace && (
-        <span className="text-caption text-muted">
-          On pace for{' '}
-          <span className={cn('tnum font-medium', projectedOver ? 'text-warning-strong' : 'text-positive-strong')}>
-            {formatCurrency(projected, { cents: false })}
-          </span>{' '}
-          this month
-        </span>
-      )}
-      {/* The actionable day rate, only while there is still headroom and days to spread
-          it over. An over-budget month gets no per-day scold. */}
-      {showPace && remaining > 0 && daysLeft > 0 && (
-        <span className="text-caption text-muted">
-          {daysLeft} {daysLeft === 1 ? 'day' : 'days'} left, about{' '}
-          <span className="tnum">{formatCurrency(remaining / daysLeft, { cents: false })}</span>/day to stay on budget
-        </span>
-      )}
-    </div>
-  )
-}
-
-// A budgeted spend group (discretionary): each category with its month bar, then the
-// group totals and the one annual figure. Spent is logged only; a zero budget renders a
-// calm empty bar.
-function SpendGroup({ group }: { group: BudgetGroup }) {
+    )
+  }
   return (
-    <div className="flex flex-col gap-5">
-      <ul className="flex flex-col gap-5">
-        {group.rows.map((row) => (
-          <SpendRow key={row.category.id} row={row} />
-        ))}
-      </ul>
-      <div className="flex items-center justify-between border-t border-line pt-4 text-callout">
-        <span className="font-medium text-ink">Total this month</span>
-        <span className="tnum text-ink-2">
-          {formatCurrency(group.monthSpent, { cents: false })}
-          {group.monthBudget > 0 && <> of {formatCurrency(group.monthBudget, { cents: false })}</>}
-        </span>
-      </div>
-    </div>
+    <ul className="flex flex-col gap-5">
+      {rows.map((row) => (
+        <SpendRow key={row.category.id} row={row} showBudget={!person} />
+      ))}
+    </ul>
   )
 }
 
-function SpendRow({ row }: { row: CategoryRow }) {
+function SpendRow({ row, showBudget }: { row: CategoryRow; showBudget: boolean }) {
+  const used = row.monthSpent
   const noBudget = row.monthBudget <= 0
-  const over = !noBudget && row.monthSpent > row.monthBudget
+  const over = showBudget && !noBudget && used > row.monthBudget
   return (
     <li className="flex flex-col gap-2">
       <div className="flex min-w-0 items-center justify-between gap-2">
@@ -548,186 +462,93 @@ function SpendRow({ row }: { row: CategoryRow }) {
             aria-hidden="true"
           />
           <span className="truncate">{titleCase(row.category.name)}</span>
+          {over && (
+            <span className="shrink-0 rounded-pill bg-[color-mix(in_srgb,var(--color-danger)_14%,transparent)] px-1.5 py-0.5 text-[11px] font-semibold text-danger">
+              Over
+            </span>
+          )}
         </span>
         <span className="tnum shrink-0 text-caption text-ink-2">
-          {noBudget ? (
-            <>{formatCurrency(row.monthSpent, { cents: false })} spent, no budget</>
+          {!showBudget ? (
+            <>{formatCurrency(used, { cents: false })} spent</>
+          ) : noBudget ? (
+            <>{formatCurrency(used, { cents: false })} spent, no budget</>
           ) : (
             <>
-              <span className={cn(over && 'font-semibold text-danger')}>
-                {formatCurrency(row.monthSpent, { cents: false })}
-              </span>{' '}
-              of {formatCurrency(row.monthBudget, { cents: false })}
+              <span className={cn(over && 'font-semibold text-danger')}>{formatCurrency(used, { cents: false })}</span> of{' '}
+              {formatCurrency(row.monthBudget, { cents: false })}
             </>
           )}
         </span>
       </div>
-      <ProgressBar value={row.monthSpent} max={row.monthBudget} showLabel={false} />
+      {showBudget && <ProgressBar value={used} max={row.monthBudget} showLabel={false} />}
     </li>
   )
 }
 
-// Committed fixed bills, grouped by category, each bill with its due day. These are
-// known monthly costs, not spending, so there is no progress bar, just the total.
-function FixedGroup({ group }: { group: BudgetGroup }) {
-  const rows = group.rows.filter((r) => r.bills.length > 0)
+// Bills, actual vs planned: each bill category with what has actually been logged
+// against it this month next to its planned bill total, biggest bill first. Only
+// categories with a planned amount (or something logged) show. This is where an actual
+// charge logged from Home lands, so the couple can see a bill running high or low.
+function BillsGroup({ group }: { group: BudgetGroup }) {
+  // Biggest planned bill first (then biggest logged), so rent leads and a small logged
+  // charge never jumps above it.
+  const rows = group.rows
+    .filter((r) => r.committedMonthly > 0 || r.monthSpent > 0)
+    .slice()
+    .sort((a, b) => b.committedMonthly - a.committedMonthly || b.monthSpent - a.monthSpent)
+  if (rows.length === 0) return null
   return (
-    <div className="flex flex-col gap-4">
-      <ul className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5 border-t border-line pt-5">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="text-h3 text-ink">Bills</h3>
+        <span className="text-caption text-muted">logged vs planned</span>
+      </div>
+      <ul className="flex flex-col gap-5">
         {rows.map((row) => (
-          <li key={row.category.id} className="flex flex-col gap-1.5">
-            <div className="flex min-w-0 items-center justify-between gap-2">
-              <span className="flex min-w-0 items-center gap-2 text-callout font-medium text-ink">
-                <span
-                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: row.category.color }}
-                  aria-hidden="true"
-                />
-                <span className="truncate">{titleCase(row.category.name)}</span>
-              </span>
-              <Money amount={row.committedMonthly} cents={false} className="shrink-0" />
-            </div>
-            <ul className="flex flex-col gap-0.5 pl-4.5">
-              {row.bills.map((bill) => (
-                <li key={bill.id} className="flex items-center justify-between gap-2 text-caption text-muted">
-                  <span className="truncate">{titleCase(bill.name)}, day {bill.dueDay}</span>
-                  <Money amount={bill.amount} size="sm" tone="muted" cents={false} />
-                </li>
-              ))}
-            </ul>
-          </li>
+          <BillCatRow key={row.category.id} row={row} />
         ))}
       </ul>
-      <div className="flex items-center justify-between border-t border-line pt-4 text-callout">
-        <span className="font-medium text-ink">Fixed bills each month</span>
-        <Money amount={group.committedMonthly} cents={false} />
-      </div>
-      <span className="-mt-2 text-caption text-muted">
-        About <span className="tnum">{formatCurrency(group.committedMonthly * 12, { cents: false })}</span> a year.
-      </span>
     </div>
   )
 }
 
-// Savings, in plain language: a progress ring per goal, the amount we aim to save each
-// month (our surplus, which steps up when Lisa's pay starts), what moves automatically,
-// and the cash counted toward the house. The house goal reads the combined flagged
-// account balance and the same pace as the House tab.
-function SavingsGroup({
-  committedMonthly,
-  houseContribution,
-  houseContributionLater,
-  incomeStepLabel,
-  houseCash,
-  goals,
-  houseGoalId,
-  houseSavings,
-  houseSchedule,
-  today,
-  downReturn,
-  generalReturn,
-  contributionByGoal,
-}: {
-  committedMonthly: number
-  houseContribution: number
-  houseContributionLater: number
-  incomeStepLabel: string | null
-  houseCash: number
-  goals: import('../types').Goal[]
-  houseGoalId: string | null
-  houseSavings: number | null
-  houseSchedule: ContributionSchedule | null
-  today: Date
-  downReturn: number
-  generalReturn: number
-  contributionByGoal: Map<string, number>
-}) {
+function BillCatRow({ row }: { row: CategoryRow }) {
+  const used = row.monthSpent
+  const planned = row.committedMonthly
+  const over = planned > 0 && used > planned
   return (
-    <div className="flex flex-col gap-5">
-      {goals.length > 0 && (
-        <div className={goals.length === 1 ? 'flex justify-center' : 'grid grid-cols-2 gap-3 sm:grid-cols-3'}>
-          {goals.map((goal) => {
-            const current = goal.id === houseGoalId && houseSavings != null ? houseSavings : goal.current
-            const contribution = contributionByGoal.get(goal.id) ?? 0
-            const isHouse = goal.id === houseGoalId
-            const pct = goal.target > 0 ? current / goal.target : 0
-            let caption: string
-            if (current >= goal.target) caption = 'Reached'
-            else if (isHouse && houseSchedule) {
-              // The house goal uses the stepped contribution (it rises when Lisa's pay
-              // starts in September), so its projected date matches the House tab exactly.
-              const months = monthsToReachWithSchedule(goal.target, current, houseSchedule, downReturn, today)
-              caption = Number.isFinite(months)
-                ? formatDate(isoDate(addMonths(today, months)), 'month')
-                : `${formatPercent(pct)} saved`
-            } else if (contribution > 0) {
-              // Non-house goals grow at the general return, not the house de-risked rate.
-              const months = monthsToReach(goal.target, current, contribution, generalReturn)
-              caption = Number.isFinite(months)
-                ? formatDate(isoDate(addMonths(today, months)), 'month')
-                : `${formatPercent(pct)} saved`
-            } else caption = `${formatPercent(pct)} saved`
-            return (
-              <GoalRing
-                key={goal.id}
-                value={current}
-                target={goal.target}
-                color={goal.color}
-                size={goals.length === 1 ? 144 : 96}
-                label={titleCase(goal.name)}
-                caption={caption}
-              />
-            )
-          })}
-        </div>
-      )}
-
-      <div className="flex flex-col gap-1 border-t border-line pt-4">
-        <div className="flex items-center justify-between text-callout">
-          <span className="font-medium text-ink">We aim to save each month</span>
-          <Money amount={houseContribution} tone="positive" cents={false} />
-        </div>
-        {incomeStepLabel && houseContributionLater > houseContribution && (
-          <span className="text-caption text-muted">
-            About <span className="tnum">{formatCurrency(houseContributionLater, { cents: false })}</span> a month from{' '}
-            {incomeStepLabel}, once both incomes apply.
-          </span>
-        )}
+    <li className="flex flex-col gap-2">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-2 text-callout text-ink">
+          <span
+            className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{ backgroundColor: row.category.color }}
+            aria-hidden="true"
+          />
+          <span className="truncate">{titleCase(row.category.name)}</span>
+          {over && (
+            <span className="shrink-0 rounded-pill bg-[color-mix(in_srgb,var(--color-danger)_14%,transparent)] px-1.5 py-0.5 text-[11px] font-semibold text-danger">
+              Over
+            </span>
+          )}
+        </span>
+        <span className="tnum shrink-0 text-caption text-ink-2">
+          {planned <= 0 ? (
+            <>{formatCurrency(used, { cents: false })} logged</>
+          ) : used > 0 ? (
+            <>
+              <span className={cn(over && 'font-semibold text-danger')}>{formatCurrency(used, { cents: false })}</span> of{' '}
+              {formatCurrency(planned, { cents: false })}
+            </>
+          ) : (
+            <>none logged of {formatCurrency(planned, { cents: false })}</>
+          )}
+        </span>
       </div>
-
-      {houseCash > 0 && (
-        <div className="flex items-center justify-between gap-3 rounded-lg bg-surface-2 px-3.5 py-3">
-          <span className="text-callout text-ink-2">Cash, counts toward the house</span>
-          <Money amount={houseCash} cents={false} />
-        </div>
-      )}
-
-      <Explain label="How does our saving work?">
-        Each month we aim to put our full surplus toward the home.{' '}
-        <span className="tnum">{formatCurrency(committedMonthly, { cents: false })}</span> moves automatically on
-        payday, and whatever we do not spend from our spending money goes too.
-        {houseCash > 0 && (
-          <>
-            {' '}
-            We count our <span className="tnum">{formatCurrency(houseCash, { cents: false })}</span> cash toward the
-            house now, and we will rebuild a cash buffer after we buy, so it does not reduce the total today.
-          </>
-        )}
-      </Explain>
-    </div>
+      {planned > 0 && <ProgressBar value={used} max={planned} showLabel={false} />}
+    </li>
   )
-}
-
-// Active savings contributions by the goal they fund, for the projected dates. Ended
-// bills stop funding a goal, matching the plan and budget engines.
-function savingsContribution(fixed: import('../types').FixedExpense[], today: Date): Map<string, number> {
-  const map = new Map<string, number>()
-  for (const bill of fixed) {
-    if (bill.active && billActiveOn(bill, today) && bill.goalId) {
-      map.set(bill.goalId, (map.get(bill.goalId) ?? 0) + bill.amount)
-    }
-  }
-  return map
 }
 
 function CategoryFilter({
@@ -744,7 +565,8 @@ function CategoryFilter({
       value={value}
       onChange={(event) => onChange(event.target.value)}
       aria-label="Filter by category"
-      className="min-h-11 max-w-[150px] rounded-md border border-line bg-surface px-2.5 py-1.5 text-callout text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+      // text-body (16px), not text-callout (15px): a sub-16px select triggers iOS focus-zoom.
+      className="min-h-11 min-w-0 max-w-[150px] rounded-md border border-line bg-surface px-2.5 py-1.5 text-body text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
     >
       <option value="all">All categories</option>
       {categories.map((category) => (

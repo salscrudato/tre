@@ -8,14 +8,30 @@
 // Nothing is double counted: total spent is the sum of logged transactions only.
 
 import type { Category, CategoryType, FixedExpense, Transaction } from '../types'
-import { billActiveOn } from './summary'
+import { billActiveOn, billMonthlyAmount } from './summary'
 
 const MONTHS_PER_YEAR = 12
+
+// Whether a ledger row counts toward spent totals. Ordinary rows count, and so does a
+// package session (that is where a prepaid package's money is recognized). The one-off
+// payment rows do not: a paid-in-full bill is already counted as its monthly spread,
+// and a package purchase is counted as its sessions are used. This single predicate is
+// what keeps every outflow counted exactly once.
+export function isCountedSpend(tx: Pick<Transaction, 'kind'>): boolean {
+  return tx.kind == null || tx.kind === 'packageSession'
+}
 
 // The one definition of the monthly savings rate, shared by Home, Spending, and
 // Optimize so they never disagree. Money out is the committed non-savings bills plus
 // logged spend in non-savings categories. Logging to a savings bucket is saving, not
 // spending, so it never lowers the rate. Bills past their end date no longer count.
+//
+// A bill (fixed) category is special: the app invites logging the ACTUAL charge into it
+// to compare with the plan (see categoryTypeHint), so counting both the committed bill
+// and that same logged charge would double count the money. For each fixed category we
+// therefore count max(committed plan, logged actual) exactly once: the plan when nothing
+// (or an under-plan charge) is logged, the actual when it runs over plan or has no active
+// bill. Variable and unknown categories count their logged spend in full, as before.
 export function savingsRateMonthly(
   income: number,
   fixed: FixedExpense[],
@@ -25,13 +41,40 @@ export function savingsRateMonthly(
 ): number {
   if (income <= 0) return 0
   const typeById = new Map(categories.map((c) => [c.id, c.type]))
-  const committedNonSavings = fixed
-    .filter((f) => f.active && billActiveOn(f, today) && typeById.get(f.categoryId) !== 'savings')
-    .reduce((sum, f) => sum + f.amount, 0)
-  const loggedNonSavings = monthTx
-    .filter((t) => typeById.get(t.categoryId) !== 'savings')
-    .reduce((sum, t) => sum + t.amount, 0)
-  const saved = income - committedNonSavings - loggedNonSavings
+
+  const activeNonSavingsBills = fixed.filter(
+    (f) => f.active && billActiveOn(f, today) && typeById.get(f.categoryId) !== 'savings',
+  )
+  const committedNonSavings = activeNonSavingsBills.reduce((sum, f) => sum + billMonthlyAmount(f), 0)
+
+  // The committed monthly plan per FIXED category, to net against actuals logged there.
+  const committedByFixedCat = new Map<string, number>()
+  for (const f of activeNonSavingsBills) {
+    if (typeById.get(f.categoryId) === 'fixed') {
+      committedByFixedCat.set(f.categoryId, (committedByFixedCat.get(f.categoryId) ?? 0) + billMonthlyAmount(f))
+    }
+  }
+
+  // Logged actuals in fixed categories are pooled separately so only their excess over the
+  // plan adds to spend; everything else (variable, or a deleted category) counts in full.
+  const loggedByFixedCat = new Map<string, number>()
+  let loggedOther = 0
+  for (const t of monthTx) {
+    if (!isCountedSpend(t)) continue
+    const type = typeById.get(t.categoryId)
+    if (type === 'savings') continue
+    if (type === 'fixed') {
+      loggedByFixedCat.set(t.categoryId, (loggedByFixedCat.get(t.categoryId) ?? 0) + t.amount)
+    } else {
+      loggedOther += t.amount
+    }
+  }
+  let fixedExcess = 0
+  for (const [categoryId, logged] of loggedByFixedCat) {
+    fixedExcess += Math.max(0, logged - (committedByFixedCat.get(categoryId) ?? 0))
+  }
+
+  const saved = income - committedNonSavings - loggedOther - fixedExcess
   return Math.max(0, Math.min(1, saved / income))
 }
 
@@ -94,16 +137,20 @@ export function buildBudgetView(
   yearTx: Transaction[],
   today: Date = new Date(),
 ): BudgetView {
+  // Only counted rows reach any spent figure; the one-off payment rows for
+  // paid-in-full bills and package purchases stay in the ledger but never here.
+  const countedMonthTx = monthTx.filter(isCountedSpend)
+  const countedYearTx = yearTx.filter(isCountedSpend)
   const monthByCat = new Map<string, number>()
-  for (const tx of monthTx) monthByCat.set(tx.categoryId, sumIn(monthByCat, tx.categoryId) + tx.amount)
+  for (const tx of countedMonthTx) monthByCat.set(tx.categoryId, sumIn(monthByCat, tx.categoryId) + tx.amount)
   const yearByCat = new Map<string, number>()
-  for (const tx of yearTx) yearByCat.set(tx.categoryId, sumIn(yearByCat, tx.categoryId) + tx.amount)
+  for (const tx of countedYearTx) yearByCat.set(tx.categoryId, sumIn(yearByCat, tx.categoryId) + tx.amount)
 
   const committedByCat = new Map<string, number>()
   const billsByCat = new Map<string, FixedExpense[]>()
   for (const bill of fixed) {
     if (!bill.active || !billActiveOn(bill, today)) continue
-    committedByCat.set(bill.categoryId, sumIn(committedByCat, bill.categoryId) + bill.amount)
+    committedByCat.set(bill.categoryId, sumIn(committedByCat, bill.categoryId) + billMonthlyAmount(bill))
     const list = billsByCat.get(bill.categoryId) ?? []
     list.push(bill)
     billsByCat.set(bill.categoryId, list)
@@ -125,7 +172,12 @@ export function buildBudgetView(
       monthSpent: sumIn(monthByCat, category.id),
       yearSpent: sumIn(yearByCat, category.id),
       committedMonthly,
-      bills: (billsByCat.get(category.id) ?? []).slice().sort((a, b) => a.dueDay - b.dueDay),
+      // Largest bills first (by their monthly cost, so a paid-in-full bill sits where
+      // its spread belongs), so the eye lands on the money that matters; due day
+      // breaks ties.
+      bills: (billsByCat.get(category.id) ?? [])
+        .slice()
+        .sort((a, b) => billMonthlyAmount(b) - billMonthlyAmount(a) || a.dueDay - b.dueDay),
     }
     const group = groups[category.type]
     group.rows.push(row)
@@ -136,10 +188,30 @@ export function buildBudgetView(
     group.committedMonthly += row.committedMonthly
   }
 
-  // Headline spent is every logged transaction, including any in a category not in the
-  // list, so the total is honest.
-  const monthSpent = monthTx.reduce((sum, tx) => sum + tx.amount, 0)
-  const yearSpent = yearTx.reduce((sum, tx) => sum + tx.amount, 0)
+  // Every consumer sees the same deterministic order on first paint: the biggest
+  // money first. Spent leads (the discretionary view), then committed (the fixed
+  // view), then the plan, with the category name as the final stable tiebreak.
+  for (const group of Object.values(groups)) {
+    group.rows.sort(
+      (a, b) =>
+        b.monthSpent - a.monthSpent ||
+        b.committedMonthly - a.committedMonthly ||
+        b.monthBudget - a.monthBudget ||
+        a.category.name.localeCompare(b.category.name),
+    )
+  }
+
+  // A bill whose category no longer exists must not vanish from the totals: count it
+  // as a fixed commitment (matching the Bills page), so Out this month stays honest.
+  const knownIds = new Set(categories.map((c) => c.id))
+  for (const [categoryId, amount] of committedByCat) {
+    if (!knownIds.has(categoryId)) groups.fixed.committedMonthly += amount
+  }
+
+  // Headline spent is every counted transaction, including any in a category not in
+  // the list, so the total is honest.
+  const monthSpent = countedMonthTx.reduce((sum, tx) => sum + tx.amount, 0)
+  const yearSpent = countedYearTx.reduce((sum, tx) => sum + tx.amount, 0)
 
   return {
     fixed: groups.fixed,
@@ -152,19 +224,6 @@ export function buildBudgetView(
     committedFixedMonthly: groups.fixed.committedMonthly,
     committedSavingsMonthly: groups.savings.committedMonthly,
   }
-}
-
-export interface RemainderInput {
-  monthlyIncome: number
-  committedFixedMonthly: number
-  discretionaryBudgetMonthly: number
-}
-
-// What is left to save each month after the committed fixed costs and the planned
-// discretionary budget. The plan view (not actuals): income in, fixed out,
-// discretionary budget, the rest is headed to savings.
-export function leftToSaveMonthly(input: RemainderInput): number {
-  return input.monthlyIncome - input.committedFixedMonthly - input.discretionaryBudgetMonthly
 }
 
 // The planned monthly discretionary budget: the sum of the per-category budgets for the

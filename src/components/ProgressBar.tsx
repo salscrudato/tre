@@ -19,7 +19,8 @@ export type ProgressBarProps = {
 }
 
 // Fill is green under 80 percent of budget, amber 80 to 100, red over 100 with a
-// distinct darker-red overflow segment. The number is always shown, so color is
+// distinct overflow segment (danger mixed toward ink, so it reads as a deeper red in
+// light mode and stays visible in dark). The number is always shown, so color is
 // never the only signal.
 function fillColor(pct: number): string {
   if (pct >= 100) return 'var(--color-danger)'
@@ -86,7 +87,7 @@ export function ProgressBar({
           width="7"
           height="8"
           rx="4"
-          fill="color-mix(in srgb, var(--color-danger) 60%, black)"
+          fill="color-mix(in srgb, var(--color-danger) 60%, var(--color-ink))"
           opacity={over ? 1 : 0}
           style={{ transition: reduced ? undefined : 'opacity var(--dur-fast) var(--ease-spring)' }}
         />

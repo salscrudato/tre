@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
+  addToMonthKey,
   billActiveOn,
+  billCoverage,
+  billMonthlyAmount,
   incomeInEffect,
   monthlyIncomeByOwnerAt,
   monthlyNetIncome,
@@ -100,5 +103,56 @@ describe('nextIncomeStart', () => {
   it('is null once every income has started', () => {
     expect(nextIncomeStart(incomes, new Date(2026, 9, 1))).toBeNull()
     expect(nextIncomeStart([sal], new Date(2026, 0, 1))).toBeNull()
+  })
+})
+
+describe('paid-in-full coverage', () => {
+  const geico = {
+    amount: 1440,
+    cadence: 'paidInFull' as const,
+    coverageStart: '2026-01',
+    coverageMonths: 12,
+  }
+
+  it('billMonthlyAmount spreads a paid-in-full price across its covered months', () => {
+    expect(billMonthlyAmount(geico)).toBeCloseTo(120, 6)
+    expect(billMonthlyAmount({ amount: 200 })).toBe(200)
+    // A paid-in-full bill missing its window falls back to the plain amount.
+    expect(billMonthlyAmount({ amount: 200, cadence: 'paidInFull' })).toBe(200)
+  })
+
+  it('billActiveOn is true exactly inside the coverage window', () => {
+    expect(billActiveOn(geico, new Date(2025, 11, 15))).toBe(false) // Dec 2025, before
+    expect(billActiveOn(geico, new Date(2026, 0, 1))).toBe(true) // Jan 2026, first month
+    expect(billActiveOn(geico, new Date(2026, 11, 31))).toBe(true) // Dec 2026, last month
+    expect(billActiveOn(geico, new Date(2027, 0, 1))).toBe(false) // Jan 2027, after
+  })
+
+  it('a coverage window crossing a year boundary stays month-exact', () => {
+    const midYear = { ...geico, coverageStart: '2026-08', coverageMonths: 6 }
+    expect(billActiveOn(midYear, new Date(2026, 6, 15))).toBe(false)
+    expect(billActiveOn(midYear, new Date(2026, 7, 1))).toBe(true)
+    expect(billActiveOn(midYear, new Date(2027, 0, 20))).toBe(true) // Jan 2027, sixth month
+    expect(billActiveOn(midYear, new Date(2027, 1, 1))).toBe(false)
+  })
+
+  it('billCoverage reports the window, months left, and remaining value', () => {
+    const mid = billCoverage(geico, new Date(2026, 6, 10)) // July: Jul..Dec left
+    expect(mid).not.toBeNull()
+    expect(mid?.startMonth).toBe('2026-01')
+    expect(mid?.endMonth).toBe('2026-12')
+    expect(mid?.monthsLeft).toBe(6)
+    expect(mid?.remainingValue).toBeCloseTo(720, 6)
+    // Before the window: everything remains. After: nothing.
+    expect(billCoverage(geico, new Date(2025, 10, 1))?.monthsLeft).toBe(12)
+    expect(billCoverage(geico, new Date(2027, 2, 1))?.monthsLeft).toBe(0)
+    // A monthly bill has no coverage.
+    expect(billCoverage({ amount: 200 }, new Date())).toBeNull()
+  })
+
+  it('addToMonthKey does month arithmetic across years', () => {
+    expect(addToMonthKey('2026-11', 2)).toBe('2027-01')
+    expect(addToMonthKey('2026-01', 11)).toBe('2026-12')
+    expect(addToMonthKey('2026-01', 0)).toBe('2026-01')
   })
 })

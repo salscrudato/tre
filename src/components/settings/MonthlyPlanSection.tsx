@@ -6,6 +6,7 @@ import { useGoals } from '../../hooks/useGoals'
 import { useHousehold } from '../../hooks/useHousehold'
 import { useToday } from '../../hooks/useToday'
 import { householdPlan } from '../../lib/plan'
+import { findHouseGoal } from '../../lib/house'
 import { formatCurrency, formatDate } from '../../lib/format'
 import { Card } from '../Card'
 import { Money } from '../Money'
@@ -16,7 +17,7 @@ import { Spinner } from '../Spinner'
 // sits above the editable sections and reconciles to the same numbers every screen
 // shows. The surplus is our default monthly house contribution (adjustable in Budget
 // and projections), so the plan reflects our real money, not one small auto-transfer.
-export function MonthlyPlanSection() {
+export function MonthlyPlanSection({ onSetHouseSavings }: { onSetHouseSavings?: () => void } = {}) {
   const { household } = useHousehold()
   const settings = household?.settings ?? null
   const { incomes, isLoading: incomesLoading } = useIncomes()
@@ -30,7 +31,7 @@ export function MonthlyPlanSection() {
   const loading =
     incomesLoading || fixedLoading || categoriesLoading || budgetLoading || goalsLoading || !settings
 
-  const houseGoalId = goals.find((g) => g.name.toLowerCase().includes('house'))?.id ?? null
+  const houseGoalId = findHouseGoal(goals)?.id ?? null
   const plan = settings
     ? householdPlan({ settings, incomes, fixed, categories, byCategoryId, houseGoalId, today })
     : null
@@ -50,33 +51,68 @@ export function MonthlyPlanSection() {
           {plan.otherGoalContributionsMonthly > 0 && (
             <Row label="Other savings goals" amount={plan.otherGoalContributionsMonthly} muted />
           )}
-          <div className="flex items-center justify-between gap-3 border-t border-line pt-3">
-            <span className="text-callout font-medium text-ink">Free to save each month</span>
-            <Money
-              amount={plan.surplusMonthly}
-              size="lg"
-              tone={plan.surplusMonthly >= 0 ? 'positive' : 'negative'}
-              cents={false}
-            />
-          </div>
-          <p className="text-caption text-muted">
-            {plan.houseContributionIsSurplus ? (
-              <>All of it is our default monthly contribution toward the home.</>
-            ) : (
-              <>
-                We plan{' '}
-                <span className="tnum text-ink-2">
-                  {formatCurrency(plan.houseContributionMonthly, { cents: false })}
-                </span>{' '}
-                a month toward the home, set in Budget and projections.
-              </>
-            )}
-          </p>
+          {plan.houseContributionSource === 'bills' ? (
+            <>
+              <div className="flex items-center justify-between gap-3 border-t border-line pt-3">
+                <span className="text-callout font-medium text-ink">House savings, automatic</span>
+                <Money amount={plan.houseContributionMonthly} size="lg" tone="positive" cents={false} />
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-callout text-ink-2">Left over each month</span>
+                <Money
+                  amount={plan.unallocatedMonthly}
+                  tone={plan.unallocatedMonthly >= 0 ? 'positive' : 'negative'}
+                  cents={false}
+                />
+              </div>
+              <p className="text-caption text-muted">
+                The named transfers (House Savings - Sal, House Savings - Lisa) drive the house pace. The leftover is
+                the work still on the table: sweep it toward the home whenever the month ends under budget.
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-3 border-t border-line pt-3">
+                <span className="text-callout font-medium text-ink">Free to save each month</span>
+                <Money
+                  amount={plan.surplusMonthly}
+                  size="lg"
+                  tone={plan.surplusMonthly >= 0 ? 'positive' : 'negative'}
+                  cents={false}
+                />
+              </div>
+              <p className="text-caption text-muted">
+                {plan.houseContributionSource === 'surplus' ? (
+                  <>All of it is our default monthly contribution toward the home.</>
+                ) : (
+                  <>
+                    We plan{' '}
+                    <span className="tnum text-ink-2">
+                      {formatCurrency(plan.houseContributionMonthly, { cents: false })}
+                    </span>{' '}
+                    a month toward the home, set in Budget and projections.
+                  </>
+                )}
+              </p>
+              {/* When the pace comes from the leftover surplus (no named transfers yet), the
+                  couple can turn it into a fixed monthly house savings amount in one tap: the
+                  single most important dial in the app, otherwise buried in the bill form. */}
+              {plan.houseContributionSource === 'surplus' && onSetHouseSavings && (
+                <button
+                  type="button"
+                  onClick={onSetHouseSavings}
+                  className="inline-flex min-h-11 w-fit items-center rounded-pill px-2 text-callout font-medium text-accent-strong transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+                >
+                  Set monthly house savings
+                </button>
+              )}
+            </>
+          )}
           {plan.incomeStepDate && plan.surplusLater > plan.surplusMonthly && (
             <p className="text-caption text-muted">
               From {formatDate(plan.incomeStepDate, 'month')}, once both incomes apply, about{' '}
               <span className="tnum text-ink-2">{formatCurrency(plan.surplusLater, { cents: false })}</span> a month is
-              free to save. The house pace uses the lower amount until then.
+              free to save.
             </p>
           )}
         </div>

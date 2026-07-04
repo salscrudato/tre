@@ -13,18 +13,18 @@ import { useBudget } from './useBudget'
 import { useAccounts } from './useAccounts'
 import { useToday } from './useToday'
 import { horizonIsValid } from '../lib/money'
-import { houseContext } from '../lib/house'
+import { houseContext, findHouseGoal } from '../lib/house'
 import { householdPlan } from '../lib/plan'
 
 export function useHouseModel() {
   const { household } = useHousehold()
   const settings = household?.settings ?? null
-  const { categories, isLoading: categoriesLoading } = useCategories()
-  const { incomes, isLoading: incomesLoading } = useIncomes()
-  const { goals, isLoading: goalsLoading } = useGoals()
-  const { fixed, isLoading: fixedLoading } = useFixed()
-  const { byCategoryId, isLoading: budgetLoading } = useBudget()
-  const { accounts, isLoading: accountsLoading } = useAccounts()
+  const { categories, isLoading: categoriesLoading, isError: categoriesError } = useCategories()
+  const { incomes, isLoading: incomesLoading, isError: incomesError } = useIncomes()
+  const { goals, isLoading: goalsLoading, isError: goalsError } = useGoals()
+  const { fixed, isLoading: fixedLoading, isError: fixedError } = useFixed()
+  const { byCategoryId, isLoading: budgetLoading, isError: budgetError } = useBudget()
+  const { accounts, isLoading: accountsLoading, isError: accountsError } = useAccounts()
   const today = useToday()
 
   // True until the household settings and every underlying read have settled, so
@@ -38,8 +38,13 @@ export function useHouseModel() {
     budgetLoading ||
     accountsLoading
 
+  // Any underlying read failing means the model is untrustworthy; screens show an
+  // error state instead of mistaking a failed load for empty data.
+  const isError =
+    categoriesError || incomesError || goalsError || fixedError || budgetError || accountsError
+
   const houseGoalId = useMemo(
-    () => goals.find((g) => g.name.toLowerCase().includes('house'))?.id ?? null,
+    () => findHouseGoal(goals)?.id ?? null,
     [goals],
   )
 
@@ -59,5 +64,5 @@ export function useHouseModel() {
 
   const horizonValid = house ? horizonIsValid(house.targetDate, today) : false
 
-  return { settings, today, categories, categoriesLoading, incomes, goals, fixed, accounts, byCategoryId, houseGoalId, plan, house, horizonValid, isLoading }
+  return { settings, today, categories, categoriesLoading, incomes, goals, fixed, accounts, byCategoryId, houseGoalId, plan, house, horizonValid, isLoading, isError }
 }
