@@ -1,7 +1,7 @@
 import { formatCurrency, formatCurrencyCompact } from '../lib/format'
 import { cn } from '../lib/cn'
 
-type MoneyTone = 'default' | 'positive' | 'negative' | 'muted' | 'invert' | 'wealth'
+type MoneyTone = 'default' | 'positive' | 'negative' | 'muted' | 'wealth'
 type MoneySize = 'sm' | 'md' | 'lg' | 'display'
 
 const toneClass: Record<MoneyTone, string> = {
@@ -9,7 +9,6 @@ const toneClass: Record<MoneyTone, string> = {
   positive: 'text-positive-strong',
   negative: 'text-danger',
   muted: 'text-muted',
-  invert: 'text-on-accent',
   // The indigo used for projected, long-term wealth ("what it could become").
   wealth: 'text-wealth',
 }

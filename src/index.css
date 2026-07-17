@@ -57,6 +57,9 @@
   /* Warning as TEXT needs far more contrast than warning as a fill; this darker amber
      clears 4.5:1 on white. Dark mode lifts it back to the bright amber below. */
   --color-warning-strong: #a15c00;
+  /* Warning as a FILL (the 80 to 100 percent bar): dark enough to clear the 3:1
+     graphics floor on a white card; dark mode lifts it back to the bright amber. */
+  --color-warning-fill: #e08600;
   --color-danger: #d70015;
   /* A calm indigo for projected potential and long-term wealth, distinct from the
      brand green so "what we have" and "what it could become" never read as one number. */
@@ -195,6 +198,11 @@
   /* Apple dark system reds and oranges, lifted to clear 4.5:1 on black. */
   --color-warning: #ffb340;
   --color-warning-strong: #ffb340;
+  --color-warning-fill: #ffb340;
+  /* The two darkest palette hues sit at the 3:1 graphics floor on near-black; lift
+     them in dark mode so their icons and dots stay clearly visible. */
+  --color-cat-savings: #1fa85a;
+  --color-cat-debt: #8494a8;
   --color-danger: #ff6b60;
   /* Lifted indigo so the wealth/potential color stays vivid on near-black. */
   --color-wealth: #8b88ff;

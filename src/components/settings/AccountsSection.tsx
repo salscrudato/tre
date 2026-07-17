@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { HomeIcon, PlusIcon } from '../icons/nav'
+import { HomeIcon } from '../icons/nav'
+import { AddButton } from './ListParts'
 import {
   useAccounts,
   accountHouseAmount,
@@ -9,9 +10,11 @@ import {
   houseSavingsInvestedFromAccounts,
 } from '../../hooks/useAccounts'
 import { unlinkAccountFromPlaid } from '../../services/accounts'
-import { formatCurrency, groupAmount, parseAmount, titleCase } from '../../lib/format'
+import { showToast } from '../../lib/toast'
+import { clampToCents, formatCurrency, groupAmount, parseAmount, titleCase } from '../../lib/format'
 import { Card } from '../Card'
 import { Button } from '../Button'
+import { ConfirmDeleteButton } from '../ConfirmDeleteButton'
 import { Field } from '../Field'
 import { Sheet } from '../Sheet'
 import { Segmented } from '../Segmented'
@@ -136,7 +139,7 @@ export function AccountsSection() {
                   unlinkAccountFromPlaid(sheet.account.id)
                     .then(() => qc.invalidateQueries({ queryKey: ['accounts'] }))
                     .catch(() => {
-                      // The link stays; the next open shows it still synced.
+                      showToast('Could not stop the sync. The account is still linked; try again.')
                     })
                   setSheet(null)
                 }
@@ -148,18 +151,6 @@ export function AccountsSection() {
   )
 }
 
-function AddButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="-mr-1 inline-flex min-h-11 items-center gap-1 rounded-pill px-2 py-1.5 text-callout font-medium text-accent-strong transition hover:bg-[color-mix(in_srgb,var(--color-accent)_10%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-    >
-      <PlusIcon size={16} strokeWidth={2.25} aria-hidden="true" />
-      Add
-    </button>
-  )
-}
 
 type AccountFormData = Omit<Account, 'id' | 'houseAllocation'> & { houseAllocation: number | null }
 
@@ -201,11 +192,7 @@ function AccountSheet({
       title={account ? 'Edit account' : 'Add account'}
       footer={
         <div className="flex gap-3">
-          {onDelete && (
-            <Button variant="destructive" onClick={onDelete}>
-              Delete
-            </Button>
-          )}
+          {onDelete && <ConfirmDeleteButton onConfirm={onDelete} />}
           <Button
             fullWidth
             disabled={!canSave}
@@ -213,13 +200,13 @@ function AccountSheet({
               onSubmit({
                 name: titleCase(name),
                 type,
-                balance: Math.round(balanceValue * 100) / 100,
+                balance: clampToCents(balanceValue),
                 countsTowardHouse,
                 // Only meaningful when this counts toward the house and an amount is set;
                 // null clears it so the full balance counts.
                 houseAllocation:
                   countsTowardHouse && allocation.trim() !== ''
-                    ? Math.round(allocationValue * 100) / 100
+                    ? clampToCents(allocationValue)
                     : null,
                 note: note.trim(),
               })

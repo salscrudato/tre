@@ -3,14 +3,11 @@ import { Money } from './Money'
 import { Sheet } from './Sheet'
 import { Field } from './Field'
 import { Button } from './Button'
+import { ConfirmDeleteButton } from './ConfirmDeleteButton'
 import { CategoryChip } from './CategoryChip'
-import { HomeIcon } from './icons/nav'
 import { resolveCategoryIcon } from '../config/icons'
-import { capitalizeFirst, clampToCents, formatCurrency, formatDate, groupAmount, parseAmount } from '../lib/format'
-import { titleCase } from '../lib/format'
-import { isCountedSpend } from '../lib/budget'
+import { capitalizeFirst, clampToCents, formatCurrency, formatDate, formatDayHeading, groupAmount, parseAmount, titleCase } from '../lib/format'
 import { todayISO } from '../lib/summary'
-import { cn } from '../lib/cn'
 import type { Category, Transaction } from '../types'
 
 type TxPatch = { amount?: number; categoryId?: string; date?: string; note?: string }
@@ -31,10 +28,24 @@ export type RecentTransactionsProps = {
   // is adjusted or reversed exactly (see services/transactions.ts).
   onUpdate: (tx: Transaction, patch: TxPatch) => void
   onDelete: (tx: Transaction) => void
-  // When true, each discretionary (variable) expense shows the home it gave up: this
-  // dollar was already headed for the house, so the ledger makes the tradeoff plain.
-  // Calm and honest, never shaming.
-  showHouseGivenUp?: boolean
+  // When set, the list is split into one section per calendar day with a faint divider
+  // and a day heading (Today, Yesterday, or the weekday and date). Off by default, so
+  // the flat Home "Recent" list is unchanged. `today` anchors the relative headings.
+  groupByDay?: boolean
+  today?: Date
+}
+
+// Newest-first transactions split into consecutive runs of the same calendar day. The
+// input is already sorted at the data layer, so a single pass preserves order and keeps
+// each day's rows together.
+function groupByDate(transactions: Transaction[]): { date: string; items: Transaction[] }[] {
+  const groups: { date: string; items: Transaction[] }[] = []
+  for (const tx of transactions) {
+    const last = groups[groups.length - 1]
+    if (last && last.date === tx.date) last.items.push(tx)
+    else groups.push({ date: tx.date, items: [tx] })
+  }
+  return groups
 }
 
 export function RecentTransactions({
@@ -42,56 +53,38 @@ export function RecentTransactions({
   categories,
   onUpdate,
   onDelete,
-  showHouseGivenUp = false,
+  groupByDay = false,
+  today,
 }: RecentTransactionsProps) {
   const [editing, setEditing] = useState<Transaction | null>(null)
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
 
   return (
     <>
-      <ul className="flex flex-col divide-y divide-line/70">
-        {transactions.map((tx) => {
-          const category = byId.get(tx.categoryId)
-          const Icon = resolveCategoryIcon(category?.icon ?? 'dots')
-          const color = category?.color ?? 'var(--color-muted)'
-          return (
-            <li key={tx.id}>
-              <button
-                type="button"
-                onClick={() => setEditing(tx)}
-                className="flex min-h-11 w-full items-center gap-3 rounded-md px-2 py-3 text-left transition duration-[var(--dur-fast)] ease-[var(--ease-spring)] hover:bg-surface-2 active:scale-[0.99] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-              >
-                <span
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
-                  style={{ backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`, color }}
-                  aria-hidden="true"
-                >
-                  <Icon size={16} strokeWidth={1.75} />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-callout text-ink">
-                    {tx.note?.trim() ? capitalizeFirst(tx.note) : titleCase(category?.name ?? 'Expense')}
-                  </span>
-                  <span className="block text-caption text-muted">
-                    {titleCase(category?.name ?? 'Other')}, {formatDate(tx.date, 'short')}
-                    {/* Who logged it, from the signed-in account at log time, so the
-                        ledger reads by person at a glance. */}
-                    {tx.createdBy && <>, {tx.createdBy}</>}
-                    {kindLabel(tx) && <>, {kindLabel(tx)}</>}
-                  </span>
-                  {showHouseGivenUp && category?.type === 'variable' && isCountedSpend(tx) && (
-                    <span className="mt-0.5 flex items-center gap-1 text-caption text-muted">
-                      <HomeIcon size={11} />
-                      <span className="tnum">{formatCurrency(tx.amount, { cents: false })}</span> less toward our home
-                    </span>
-                  )}
-                </span>
-                <Money amount={tx.amount} />
-              </button>
-            </li>
-          )
-        })}
-      </ul>
+      {groupByDay ? (
+        <div className="flex flex-col">
+          {groupByDate(transactions).map((group) => (
+            // A faint top border on every day after the first draws the line break
+            // between days without a heavy rule.
+            <section key={group.date} className="border-t border-line/50 first:border-t-0">
+              <h3 className="px-2 pb-1 pt-3 text-caption font-medium text-muted">
+                {formatDayHeading(group.date, today)}
+              </h3>
+              <ul className="flex flex-col divide-y divide-line/70">
+                {group.items.map((tx) => (
+                  <TxRow key={tx.id} tx={tx} category={byId.get(tx.categoryId)} onSelect={setEditing} />
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      ) : (
+        <ul className="flex flex-col divide-y divide-line/70">
+          {transactions.map((tx) => (
+            <TxRow key={tx.id} tx={tx} category={byId.get(tx.categoryId)} onSelect={setEditing} />
+          ))}
+        </ul>
+      )}
 
       {editing && (
         <EditSheet
@@ -103,6 +96,51 @@ export function RecentTransactions({
         />
       )}
     </>
+  )
+}
+
+// One tappable ledger row. Shared by the flat list and the day-grouped list so both
+// read identically; tapping opens the edit sheet.
+function TxRow({
+  tx,
+  category,
+  onSelect,
+}: {
+  tx: Transaction
+  category: Category | undefined
+  onSelect: (tx: Transaction) => void
+}) {
+  const Icon = resolveCategoryIcon(category?.icon ?? 'dots')
+  const color = category?.color ?? 'var(--color-muted)'
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onSelect(tx)}
+        className="flex min-h-11 w-full items-center gap-3 rounded-md px-2 py-3 text-left transition duration-[var(--dur-fast)] ease-[var(--ease-spring)] hover:bg-surface-2 active:scale-[0.99] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+      >
+        <span
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+          style={{ backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`, color }}
+          aria-hidden="true"
+        >
+          <Icon size={16} strokeWidth={1.75} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-callout text-ink">
+            {tx.note?.trim() ? capitalizeFirst(tx.note) : titleCase(category?.name ?? 'Expense')}
+          </span>
+          <span className="block text-caption text-muted">
+            {titleCase(category?.name ?? 'Other')}, {formatDate(tx.date, 'short')}
+            {/* Who logged it, from the signed-in account at log time, so the
+                ledger reads by person at a glance. */}
+            {tx.createdBy && <>, {tx.createdBy}</>}
+            {kindLabel(tx) && <>, {kindLabel(tx)}</>}
+          </span>
+        </span>
+        <Money amount={tx.amount} />
+      </button>
+    </li>
   )
 }
 
@@ -136,7 +174,9 @@ function EditSheet({
   const editable = categories.filter((c) => c.type !== 'savings' || c.id === tx.categoryId)
 
   const amountValue = parseAmount(amount)
-  const canSave = locked || (Number.isFinite(amountValue) && amountValue > 0 && categoryId.length > 0)
+  // A cleared native date input emits an empty string; a save with no date would
+  // orphan the row from every month window, so the date always gates saving.
+  const canSave = date.length > 0 && (locked || (Number.isFinite(amountValue) && amountValue > 0 && categoryId.length > 0))
 
   function handleSave() {
     if (!canSave) return
@@ -158,15 +198,12 @@ function EditSheet({
       title="Edit expense"
       footer={
         <div className="flex gap-3">
-          <Button
-            variant="destructive"
-            onClick={() => {
+          <ConfirmDeleteButton
+            onConfirm={() => {
               onDelete(tx)
               onClose()
             }}
-          >
-            Delete
-          </Button>
+          />
           <Button fullWidth disabled={!canSave} onClick={handleSave}>
             Save changes
           </Button>
@@ -194,7 +231,7 @@ function EditSheet({
               value={amount}
               onChange={(event) => setAmount(groupAmount(event.target.value))}
             />
-            <div className={cn('no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1')}>
+            <div role="group" aria-label="Category" className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
               {editable.map((category) => (
                 <CategoryChip
                   key={category.id}

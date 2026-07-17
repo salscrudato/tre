@@ -8,7 +8,7 @@
 import { getDoc, onSnapshot, Timestamp, type Unsubscribe } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { functions } from '../config/firebase'
-import { docRef } from './firestore'
+import { docRef, requireHouseholdId } from './firestore'
 
 // One synced Plaid account, enough to map it to one of ours by balance and last four
 // digits. Mirrors the SyncedAccount shape returned by the Cloud Function.
@@ -35,12 +35,12 @@ export interface AccountMapping {
 }
 
 const createLinkTokenFn = httpsCallable<unknown, { linkToken: string }>(functions, 'createPlaidLinkToken')
-const exchangePublicTokenFn = httpsCallable<{ publicToken: string }, PlaidSyncResult>(
+const exchangePublicTokenFn = httpsCallable<{ publicToken: string; householdId: string }, PlaidSyncResult>(
   functions,
   'exchangePlaidPublicToken',
 )
 const syncBalancesFn = httpsCallable<unknown, PlaidSyncResult>(functions, 'syncPlaidBalances')
-const setMappingFn = httpsCallable<{ mappings: AccountMapping[] }, PlaidSyncResult>(
+const setMappingFn = httpsCallable<{ mappings: AccountMapping[]; householdId: string }, PlaidSyncResult>(
   functions,
   'setPlaidAccountMapping',
 )
@@ -48,25 +48,25 @@ const setMappingFn = httpsCallable<{ mappings: AccountMapping[] }, PlaidSyncResu
 // Ask the server for a Plaid Link token. The token is short lived and safe on the client;
 // it carries no account access on its own.
 export async function createPlaidLinkToken(): Promise<string> {
-  const { data } = await createLinkTokenFn({})
+  const { data } = await createLinkTokenFn({ householdId: requireHouseholdId() })
   return data.linkToken
 }
 
 // Hand Plaid's public token to the server, which exchanges it for the access token (kept
 // server side), stores it, and runs a first balance sync. Returns the synced accounts.
 export async function exchangePublicToken(publicToken: string): Promise<PlaidSyncResult> {
-  const { data } = await exchangePublicTokenFn({ publicToken })
+  const { data } = await exchangePublicTokenFn({ publicToken, householdId: requireHouseholdId() })
   return data
 }
 
 export async function syncBettermentNow(): Promise<PlaidSyncResult> {
-  const { data } = await syncBalancesFn({})
+  const { data } = await syncBalancesFn({ householdId: requireHouseholdId() })
   return data
 }
 
 // Persist the user's account mapping, then re-sync so balances land on the right accounts.
 export async function setAccountMapping(mappings: AccountMapping[]): Promise<PlaidSyncResult> {
-  const { data } = await setMappingFn({ mappings })
+  const { data } = await setMappingFn({ mappings, householdId: requireHouseholdId() })
   return data
 }
 

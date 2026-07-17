@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CONFIG_STALE_TIME } from '../lib/queryClient'
+import { CONFIG_GC_TIME, CONFIG_STALE_TIME } from '../lib/queryClient'
 import type { Category } from '../types'
 import {
   createCategory,
@@ -18,7 +18,7 @@ const EMPTY_CATEGORIES = Object.freeze([]) as unknown as Category[]
 
 export function useCategories() {
   const qc = useQueryClient()
-  const query = useQuery({ queryKey: KEY, queryFn: listCategories, staleTime: CONFIG_STALE_TIME })
+  const query = useQuery({ queryKey: KEY, queryFn: listCategories, staleTime: CONFIG_STALE_TIME, gcTime: CONFIG_GC_TIME })
   const invalidate = () => qc.invalidateQueries({ queryKey: KEY })
 
   const create = useMutation({

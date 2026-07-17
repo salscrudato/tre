@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compactScale, formatCurrency, formatCurrencyCompact, groupAmount, parseAmount, titleCase } from './format'
+import { clampToCents, compactScale, formatCurrency, formatCurrencyCompact, formatDayHeading, groupAmount, parseAmount, titleCase } from './format'
 
 describe('formatCurrency', () => {
   it('shows thousands separators and cents by default', () => {
@@ -43,12 +43,12 @@ describe('titleCase', () => {
     expect(titleCase('house down payment')).toBe('House Down Payment')
   })
   it('capitalizes the first letter even behind a bracket', () => {
-    expect(titleCase('car (tesla)')).toBe('Car (Tesla)')
+    expect(titleCase('car (lease)')).toBe('Car (Lease)')
   })
   it('preserves brand and all-caps tokens', () => {
     expect(titleCase('AT&T')).toBe('AT&T')
     expect(titleCase('iCloud+')).toBe('iCloud+')
-    expect(titleCase('PSEG')).toBe('PSEG')
+    expect(titleCase('HOA')).toBe('HOA')
   })
   it('returns an empty string for a missing name instead of throwing', () => {
     // A Firestore doc can be missing an optional field, so titleCase must never crash on
@@ -81,5 +81,41 @@ describe('groupAmount and parseAmount', () => {
     expect(parseAmount('6,400.50')).toBe(6400.5)
     expect(parseAmount('$1,234,567.89')).toBe(1234567.89)
     expect(Number.isNaN(parseAmount(''))).toBe(true)
+  })
+})
+
+describe('clampToCents float edges', () => {
+  it('rounds the classic half-cent edges up instead of losing them to float error', () => {
+    expect(clampToCents(1.005)).toBe(1.01)
+    expect(clampToCents(2.675)).toBe(2.68)
+    expect(clampToCents(10)).toBe(10)
+  })
+})
+
+describe('formatDayHeading', () => {
+  const today = new Date(2026, 6, 17) // 2026-07-17
+
+  it('labels the current and prior day relatively', () => {
+    expect(formatDayHeading('2026-07-17', today)).toBe('Today')
+    expect(formatDayHeading('2026-07-16', today)).toBe('Yesterday')
+  })
+
+  it('uses weekday and date within the same year, no year shown', () => {
+    const heading = formatDayHeading('2026-07-14', today)
+    expect(heading).toBe('Tue, Jul 14')
+    expect(heading).not.toContain('2026')
+  })
+
+  it('adds the year for a day in a different year', () => {
+    expect(formatDayHeading('2025-12-31', today)).toContain('2025')
+  })
+
+  it('measures whole calendar days, not raw hours', () => {
+    // A late-night today and an early-morning yesterday are still one day apart.
+    expect(formatDayHeading(new Date(2026, 6, 16, 1, 0), new Date(2026, 6, 17, 23, 0))).toBe('Yesterday')
+  })
+
+  it('returns empty string for an unparseable date', () => {
+    expect(formatDayHeading('not-a-date', today)).toBe('')
   })
 })

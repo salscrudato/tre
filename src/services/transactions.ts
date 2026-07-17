@@ -92,7 +92,8 @@ export async function recordPackagePurchase(input: {
 }
 
 function roundCents(value: number): number {
-  return Math.round(value * 100) / 100
+  // Epsilon nudges classic float edges (1.005 * 100 is 100.4999...) onto the cent.
+  return Math.round((value + Number.EPSILON) * 100) / 100
 }
 
 // Adds a signed balance adjustment for a transaction's credit destination to the
@@ -201,12 +202,12 @@ export async function deleteTransactionReversing(tx: Transaction): Promise<void>
     const snap = await t.get(ref)
     if (!snap.exists()) return
     const fresh = snap.data() as CreditTx
+    // All reads happen before any write (the SDK requires it): read the package doc
+    // first, then let adjustCredit write, then restore the session and delete.
+    const pkgRef = fresh.kind === 'packageSession' && fresh.packageId ? docRef('packages', fresh.packageId) : null
+    const pkg = pkgRef ? await t.get(pkgRef) : null
     await adjustCredit(t, fresh, -fresh.amount)
-    if (fresh.kind === 'packageSession' && fresh.packageId) {
-      const pkgRef = docRef('packages', fresh.packageId)
-      const pkg = await t.get(pkgRef)
-      if (pkg.exists()) t.update(pkgRef, { sessionsUsed: increment(-1) })
-    }
+    if (pkgRef && pkg?.exists()) t.update(pkgRef, { sessionsUsed: increment(-1) })
     t.delete(ref)
   })
 }

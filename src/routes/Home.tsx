@@ -1,11 +1,12 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { ChevronRightIcon } from '../components/icons/ui'
 import { useHouseModel } from '../hooks/useHouseModel'
 import { usePackages } from '../hooks/usePackages'
 import { useTransactions } from '../hooks/useTransactions'
 import { useLogExpense } from '../hooks/useLogExpense'
 import { toQuickAddPackages } from '../lib/packages'
-import { discretionaryBudget, isCountedSpend } from '../lib/budget'
+import { everydayBudget, isCountedSpend } from '../lib/budget'
 import { recentNoteSuggestions } from '../lib/trends'
 import { homeCategoryOrder, monthBounds } from '../lib/summary'
 import { formatCurrency } from '../lib/format'
@@ -60,7 +61,7 @@ export default function Home() {
   // flash an empty chip row before the categories land.
   const categoriesLoading = catQueryLoading || (categories.length === 0 && !settings)
   const typeById = useMemo(() => new Map(categories.map((c) => [c.id, c.type])), [categories])
-  const discBudget = useMemo(() => discretionaryBudget(categories, byCategoryId), [categories, byCategoryId])
+  const everydayBudgetTotal = useMemo(() => everydayBudget(categories, byCategoryId), [categories, byCategoryId])
   // Everything we actually spent this month across the spending categories: every
   // logged, counted transaction in a variable category. Other and Dining are included,
   // and a category that runs over its budget still contributes its full amount, so this
@@ -95,9 +96,21 @@ export default function Home() {
     return logExpense(input, house)
   }
 
-  // The service returns the newest 50 already sorted biggest first, so the top 5 here
-  // are the largest recent expenses: the default high-to-low order, everywhere.
-  const recent = recentTx.transactions.slice(0, 5)
+  // The service sorts biggest first for every ledger view, but this list is titled
+  // Recent: re-sort the fetched page newest first so a just-logged expense shows at
+  // the top. An optimistic row has no server createdAt yet, so it sorts as newest.
+  const recent = useMemo(
+    () =>
+      [...recentTx.transactions]
+        .sort((a, b) => {
+          if (a.date !== b.date) return a.date < b.date ? 1 : -1
+          const aMs = a.createdAt?.toMillis() ?? Number.MAX_SAFE_INTEGER
+          const bMs = b.createdAt?.toMillis() ?? Number.MAX_SAFE_INTEGER
+          return aMs === bMs ? 0 : aMs < bMs ? 1 : -1
+        })
+        .slice(0, 5),
+    [recentTx.transactions],
+  )
 
   return (
     <div className="flex flex-col gap-6">
@@ -128,14 +141,14 @@ export default function Home() {
         className="inline-flex min-h-11 items-center justify-center gap-2 self-center rounded-pill px-4 text-callout font-medium text-ink-2 transition hover:bg-surface-2 hover:text-ink active:scale-[0.98] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
       >
         <ScanIcon size={17} aria-hidden="true" />
-        Scan or upload a receipt
+        Log expenses from a receipt
       </button>
 
       {/* Daily-tracking order: the month's position right under the hero, then the
           ledger tail. */}
       <MonthGlance
         spent={discSpent}
-        budget={discBudget}
+        budget={everydayBudgetTotal}
         today={today}
         loading={monthTx.isLoading}
         error={monthTx.isError}
@@ -166,7 +179,6 @@ export default function Home() {
               categories={categories}
               onUpdate={(tx, patch) => recentTx.update.mutate({ tx, patch })}
               onDelete={(tx) => recentTx.remove.mutate(tx)}
-              showHouseGivenUp={false}
             />
           )}
         </Card>
@@ -214,11 +226,18 @@ function MonthGlance({
   const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
   const dayOfMonth = today.getDate()
   const projected = dayOfMonth > 0 ? (spent * daysInMonth) / dayOfMonth : spent
-  const projectedOver = !noBudget && projected > budget
+  // A naive linear projection balloons from a single early purchase, so only trust it
+  // once a few days have passed, mirroring the Spending headline exactly.
+  const paceMeaningful = dayOfMonth >= 5
+  const projectedOver = !noBudget && paceMeaningful && projected > budget
   return (
     <Link
       to="/spending"
-      aria-label="Everyday spending this month, see details"
+      aria-label={
+        loading || error || budget <= 0
+          ? 'Everyday spending this month, see details'
+          : `Everyday spending this month: ${formatCurrency(used, { cents: false })} of ${formatCurrency(budget, { cents: false })}, see details`
+      }
       className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
     >
       <Card className="transition active:scale-[0.99] motion-reduce:active:scale-100">
@@ -230,9 +249,12 @@ function MonthGlance({
           <div className="flex flex-col gap-2.5">
             <div className="flex items-baseline justify-between gap-2">
               <span className="text-callout font-medium text-ink">Everyday spending</span>
-              <span className="tnum text-caption text-ink-2">
-                {formatCurrency(used, { cents: false })}
-                {!noBudget && <> of {formatCurrency(budget, { cents: false })}</>}
+              <span className="flex items-center gap-1">
+                <span className="tnum text-caption text-ink-2">
+                  {formatCurrency(used, { cents: false })}
+                  {!noBudget && <> of {formatCurrency(budget, { cents: false })}</>}
+                </span>
+                <ChevronRightIcon size={16} strokeWidth={2} className="shrink-0 text-muted" aria-hidden="true" />
               </span>
             </div>
             {!noBudget && (
@@ -243,10 +265,10 @@ function MonthGlance({
                 markerPct={(dayOfMonth / daysInMonth) * 100}
               />
             )}
-            <div className="flex items-center justify-between gap-3 text-caption">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-caption">
               <span className="text-muted">
                 {noBudget ? (
-                  'No spending budget set yet'
+                  'No spending budget yet. Set one on the Budget page.'
                 ) : over ? (
                   <>
                     <span className="tnum text-danger">{formatCurrency(-left, { cents: false })}</span> over
@@ -257,14 +279,18 @@ function MonthGlance({
                   </>
                 )}
               </span>
-              {!noBudget && (
-                <span className="text-muted">
-                  On pace for{' '}
-                  <span className={cn('tnum font-medium', projectedOver ? 'text-warning-strong' : 'text-positive-strong')}>
-                    {formatCurrency(projected, { cents: false })}
+              {!noBudget &&
+                (paceMeaningful ? (
+                  <span className="text-muted">
+                    On pace to spend{' '}
+                    <span className={cn('tnum font-medium', projectedOver ? 'text-warning-strong' : 'text-positive-strong')}>
+                      {formatCurrency(projected, { cents: false })}
+                    </span>{' '}
+                    this month{projectedOver ? ', over budget' : ''}
                   </span>
-                </span>
-              )}
+                ) : (
+                  <span className="text-muted">Too early in the month to estimate the total</span>
+                ))}
             </div>
           </div>
         )}

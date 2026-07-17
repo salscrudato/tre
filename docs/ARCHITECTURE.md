@@ -1,15 +1,17 @@
 # ARCHITECTURE.md
 
-The data model, security rules, financial engine, and AI service for Nest. This is the contract. Build prompts reference it by section.
+The data model, security rules, financial engine, and AI service for Tre (formerly Nest). This is the contract. Build prompts reference it by section.
 
 ## 1. Firestore data model
 
-One shared household. Both members read and write the same household subtree. The household id is fixed and stored in `src/config/app.ts` as `HOUSEHOLD_ID` after the seed creates it (or use a known constant like `primary`).
+Each household is one document plus its subtree, shared by its one or two members. A new user's household is created by the guided first run with the document id equal to their uid (the original household keeps its legacy id `primary`); the client discovers its household at sign-in with a `members array-contains` query and sets it as the active id in `src/services/firestore.ts`.
 
 ```
 households/{householdId}
   name: string
-  members: string[]            // [salUid, lisaUid]
+  members: string[]            // member uids
+  memberNames: { [uid: string]: string }   // display first names by uid
+  invitedEmails: string[]      // partner emails allowed to self-join
   createdAt: Timestamp
   settings: {
     currency: "USD"
@@ -36,7 +38,7 @@ households/{hid}/categories/{categoryId}
 
 households/{hid}/incomes/{incomeId}
   name: string
-  owner: "Sal" | "Lisa"
+  owner: string               // a member first name from memberNames
   netPerPaycheck: number
   frequency: "semimonthly" | "biweekly" | "monthly"
   payDays: number[]            // e.g. [15, 30]
@@ -47,7 +49,7 @@ households/{hid}/fixedExpenses/{fixedId}
   amount: number
   categoryId: string
   dueDay: number               // 1 to 31
-  owner: "Sal" | "Lisa"
+  owner: string               // a member first name, or "Both" for a shared bill
   active: boolean
   endDate?: string             // ISO date, for finite obligations (mattress)
   goalId?: string              // if this fixed line funds a goal (House, Summer)
@@ -70,7 +72,7 @@ households/{hid}/transactions/{txId}
   categoryId: string
   date: string                 // ISO date of the spend
   note?: string
-  createdBy: "Sal" | "Lisa"
+  createdBy: string            // the logging member's first name
   createdAt: Timestamp
   goalId?: string              // savings entry: which goal its credit landed on
   accountId?: string           // savings entry: which account its credit landed on
@@ -117,33 +119,14 @@ households/{hid}/accounts/{accountId}     // balances, and which count toward th
 
 ## 2. Security rules
 
-Two trusted users. Lock everything to household members. Put in `firestore.rules`:
+Every household is private to its members. The full rules live in `firestore.rules`; the model:
 
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-
-    function isMember(hid) {
-      return request.auth != null
-        && request.auth.uid in get(/databases/$(database)/documents/households/$(hid)).data.members;
-    }
-
-    match /households/{hid} {
-      allow read: if request.auth != null
-        && request.auth.uid in resource.data.members;
-      allow update: if isMember(hid);
-      allow create, delete: if false;     // created once by the seed via admin SDK
-
-      match /{sub=**} {
-        allow read, write: if isMember(hid);
-      }
-    }
-  }
-}
-```
-
-Optionally also restrict Auth at the project level to the two known emails (Authentication settings, or a `beforeCreate` blocking function). For two users, the rules above are sufficient.
+- **Create**: a signed-in user may create exactly one household whose document id equals their own uid, with themselves as the only member and a pinned payload shape (`name`, `members`, `memberNames`, `invitedEmails`, `settings`, `createdAt`). One household per account by construction; no id squatting, no creation flood.
+- **Discovery**: the client finds its household with a `members array-contains uid` query, and a pending invitation with an `invitedEmails array-contains email` query (verified email only). Both queries are provable from their own filters, so no query can scan other households.
+- **Join**: an invited, email-verified user may add exactly their own uid to `members` and touch nothing else. The client always asks before joining (never a silent join). A household holds at most two members.
+- **Read and write**: members only, for the household document and everything under it. The `meta` subcollection (Plaid status and link drafts) is member-readable but only the Cloud Functions write it.
+- **plaidItems/{hid}** (Plaid access tokens) and **productCache** are denied to every client; only the Admin SDK inside the Cloud Functions reaches them.
+- Every callable Cloud Function receives a `householdId` and verifies the caller's uid against that household's members before doing anything (see `functions/src/guard.ts`).
 
 ## 3. The financial engine (`src/lib/money.ts`)
 
@@ -355,7 +338,7 @@ Use the Field, Sheet, and Button primitives throughout. One primary action per s
 
 `vite-plugin-pwa` with `registerType: 'autoUpdate'`. The app must be installable on desktop Chrome (an install icon in the address bar), Android, and iOS Safari (Add to Home Screen), and must launch standalone with no browser chrome.
 
-Manifest: `name` and `short_name` "Nest", a `description`, `start_url` "/", `scope` "/", `display: standalone`, `theme_color` the brand green, `background_color` the app background, and a stable `id`. Icons generated from the app icon SVG: 192, 512, a maskable 512 (`purpose: "maskable"`), and a 180x180 apple-touch-icon.
+Manifest: `name` and `short_name` "Tre", a `description`, `start_url` "/", `scope` "/", `display: standalone`, `theme_color` and `background_color` the light app background (the in-page script syncs theme-color per theme after boot), and a stable `id`. Icons generated from the app icon SVG: 192, 512, a maskable 512 (`purpose: "maskable"`), and a 180x180 apple-touch-icon.
 
 iOS: include in `index.html` the `apple-mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style`, and `apple-mobile-web-app-title` meta tags plus the `apple-touch-icon` link, so the installed app looks native.
 

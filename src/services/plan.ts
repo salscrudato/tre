@@ -8,6 +8,7 @@
 
 import { httpsCallable } from 'firebase/functions'
 import { functions } from '../config/firebase'
+import { requireHouseholdId } from './firestore'
 
 export type PlanVerdict = 'buy' | 'wait' | 'skip'
 export type PlanOptionKind = 'exact' | 'alternative'
@@ -53,9 +54,11 @@ export interface PlanRequest {
   // grounding so the research spends its searches on alternatives, not re-verifying.
   knownPrice?: number
   sourceUrl?: string
-  // Our fixed monthly house saving, as context so the verdict is weighed against the
+  // The fixed monthly house saving, as context so the verdict is weighed against the
   // real goal. Judgment input only; displayed numbers still come from the search.
   houseMonthly?: number
+  // The active household, verified server side against the caller's membership.
+  householdId?: string
 }
 
 // Research with live web search takes tens of seconds; the function runs up to 300
@@ -66,18 +69,18 @@ const callPlanPurchase = httpsCallable<PlanRequest, PlanResult>(functions, 'plan
 
 // Resolving a link is fast (structured data, cached); fail fast so manual entry
 // never feels stuck behind a hung page.
-const callResolveProduct = httpsCallable<{ url: string }, ResolveResult>(functions, 'resolveProduct', {
+const callResolveProduct = httpsCallable<{ url: string; householdId: string }, ResolveResult>(functions, 'resolveProduct', {
   timeout: 20_000,
 })
 
 export async function planPurchase(request: PlanRequest): Promise<PlanResult> {
-  const result = await callPlanPurchase(request)
+  const result = await callPlanPurchase({ ...request, householdId: requireHouseholdId() })
   return result.data
 }
 
 export async function resolveProduct(url: string): Promise<ResolveResult> {
   try {
-    const result = await callResolveProduct({ url })
+    const result = await callResolveProduct({ url, householdId: requireHouseholdId() })
     return result.data
   } catch {
     // Any transport or server hiccup falls back cleanly to manual entry.

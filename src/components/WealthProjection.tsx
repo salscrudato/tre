@@ -120,7 +120,7 @@ export function WealthProjection({ monthly, annualReturn, seed = 0, className }:
 
       <Explain className="mt-2" label="How is this projected?">
         This keeps investing <span className="tnum">{formatCurrency(amount, { cents: false })}</span> a month
-        (seeded from our monthly surplus), compounding monthly at that rate. Markets move, so
+        (starting from what our plan leaves over each month), compounding monthly at that rate. Markets move, so
         treat it as a direction, not a promise. Whatever we save beyond the down payment flows into this bucket.
       </Explain>
     </div>

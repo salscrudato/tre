@@ -1,10 +1,15 @@
 # DESIGN_SYSTEM.md
 
-The visual contract for Nest. Apple-grade restraint, Tesla-grade confidence. Light by default with a true dark mode. One brand accent: green. Heavy negative space. One primary action per view. Every color and size below is a token. Components pull tokens, never raw hex.
+The visual contract for Tre (formerly Nest). Apple-grade restraint, Tesla-grade confidence. Light by default with a true dark mode. One brand accent: green. Heavy negative space. One primary action per view. Every color and size below is a token. Components pull tokens, never raw hex.
 
-Calibration note: do not build the generic "near-black page with one acid-green accent" look. Nest is light-first, soft, and premium. Green is rich forest-emerald, used with restraint, never neon.
+Calibration note: do not build the generic "near-black page with one acid-green accent" look. Tre is light-first, soft, and premium. Green is rich forest-emerald, used with restraint, never neon.
 
 ## 1. Color tokens
+
+Note: `src/index.css` is the source of truth for the shipped tokens and has refined a few
+values beyond this contract (a deeper danger red per theme, a darker muted for AA contrast,
+plus wealth, warning-strong, warning-fill, accent-fill, scrim, and header-bg tokens with
+per-theme values). When this doc and the CSS disagree, the CSS wins.
 
 Define in `src/index.css` using Tailwind v4 `@theme`. Names map one to one to CSS variables.
 

@@ -67,10 +67,10 @@ function requireRealId(tx: Transaction): void {
   if (tx.id.startsWith('temp-')) throw new Error('Still saving that entry. Try again in a second.')
 }
 
-export function useTransactions(filter: TransactionFilter = {}) {
+export function useTransactions(filter: TransactionFilter = {}, options: { staleTime?: number } = {}) {
   const qc = useQueryClient()
   const queryKey = ['transactions', filter] as const
-  const query = useQuery({ queryKey, queryFn: () => listTransactions(filter) })
+  const query = useQuery({ queryKey, queryFn: () => listTransactions(filter), staleTime: options.staleTime })
 
   // Optimistic add: insert immediately, swap the temp id for the real one on success
   // (so the just-logged row is editable before the refetch), roll back on error. The

@@ -42,7 +42,7 @@ export function CategoryChip({
         backgroundColor: selected
           ? `color-mix(in srgb, ${color} 20%, transparent)`
           : `color-mix(in srgb, ${color} 12%, transparent)`,
-        color: `color-mix(in srgb, ${color} 55%, var(--color-ink))`,
+        color: `color-mix(in srgb, ${color} 48%, var(--color-ink))`,
         boxShadow: selected ? `inset 0 0 0 1.5px ${color}` : undefined,
       }}
     >

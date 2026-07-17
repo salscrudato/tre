@@ -2,13 +2,15 @@ import { useEffect, useMemo, useState } from 'react'
 import { Sheet } from './Sheet'
 import { Field } from './Field'
 import { Button } from './Button'
+import { ConfirmDeleteButton } from './ConfirmDeleteButton'
 import { Segmented } from './Segmented'
 import { CategoryChip } from './CategoryChip'
 import { BillImpactLine } from './BillImpact'
 import { ChevronDownIcon } from './icons/ui'
 import { clampToCents, formatCurrency, formatDate, groupAmount, parseAmount, titleCase } from '../lib/format'
 import { defaultLever, recurringImpact, type RecurringContext } from '../lib/recurring'
-import { BILL_OWNER_OPTIONS, addToMonthKey, billMonthlyAmount, monthKey } from '../lib/summary'
+import { addToMonthKey, billMonthlyAmount, monthKey } from '../lib/summary'
+import { useOwners } from '../hooks/useOwners'
 import { cn } from '../lib/cn'
 import type { BillCadence, BillLever, BillOwner, Category, FixedExpense } from '../types'
 
@@ -17,7 +19,7 @@ export type BillFormData = {
   amount: number
   categoryId: string
   dueDay: number
-  // Sal, Lisa, or Both (a shared bill), so the owner toggle can scope it.
+  // One member's name, or Both (a shared bill), so the person toggle can scope it.
   owner: BillOwner
   active: boolean
   lever: BillLever
@@ -57,7 +59,7 @@ function toMonthInput(value: string | undefined): string {
 const LEVER_OPTIONS: Array<{ value: BillLever; label: string; hint: string }> = [
   { value: 'housing', label: 'Housing', hint: 'Our home. We never frame cutting this.' },
   { value: 'necessity', label: 'Necessity', hint: 'Keep it, but switch to a cheaper option.' },
-  { value: 'discretionary', label: 'Discretionary', hint: 'Fair to cut outright or downgrade.' },
+  { value: 'discretionary', label: 'Optional', hint: 'Fair to cut outright or downgrade.' },
   { value: 'savings', label: 'Savings', hint: 'A contribution that builds a goal.' },
 ]
 
@@ -96,6 +98,7 @@ export function BillSheet({
   onSubmit: (data: BillFormData) => void | Promise<void>
   onDelete?: () => void
 }) {
+  const { billOwnerOptions } = useOwners()
   const [submitting, setSubmitting] = useState(false)
   const [name, setName] = useState(bill?.name ?? '')
   const [amount, setAmount] = useState(bill ? groupAmount(String(bill.amount)) : '')
@@ -245,11 +248,7 @@ export function BillSheet({
       title={bill ? 'Edit bill' : 'Add bill'}
       footer={
         <div className="flex gap-3">
-          {onDelete && (
-            <Button variant="destructive" onClick={onDelete}>
-              Delete
-            </Button>
-          )}
+          {onDelete && <ConfirmDeleteButton onConfirm={onDelete} />}
           <Button fullWidth disabled={!canSave || submitting} aria-busy={submitting} onClick={() => void handleSave()}>
             Save bill
           </Button>
@@ -350,7 +349,7 @@ export function BillSheet({
 
         <div className="flex flex-col gap-1.5">
           <span className="text-caption text-ink-2">Whose bill</span>
-          <Segmented value={owner} onChange={setOwner} ariaLabel="Whose bill this is" options={BILL_OWNER_OPTIONS} />
+          <Segmented value={owner} onChange={setOwner} ariaLabel="Whose bill this is" options={billOwnerOptions} />
         </div>
 
         {!paidInFull && (
@@ -398,14 +397,15 @@ export function BillSheet({
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <span className="text-caption text-ink-2">Treat as</span>
-              <div role="group" aria-label="How this bill maps to our home" className="flex flex-wrap gap-2">
+              <div role="radiogroup" aria-label="How this bill maps to the home" className="flex flex-wrap gap-2">
                 {LEVER_OPTIONS.map((option) => {
                   const selected = lever === option.value
                   return (
                     <button
                       key={option.value}
                       type="button"
-                      aria-pressed={selected}
+                      role="radio"
+                      aria-checked={selected}
                       onClick={() => {
                         setLever(option.value)
                         setLeverTouched(true)
@@ -428,14 +428,15 @@ export function BillSheet({
             {lever === 'savings' && goals.length > 0 && (
               <div className="flex flex-col gap-1.5">
                 <span className="text-caption text-ink-2">Funds which goal</span>
-                <div role="group" aria-label="Goal this savings funds" className="flex flex-wrap gap-2">
+                <div role="radiogroup" aria-label="Goal this savings funds" className="flex flex-wrap gap-2">
                   {goals.map((g) => {
                     const selected = goalId === g.id
                     return (
                       <button
                         key={g.id}
                         type="button"
-                        aria-pressed={selected}
+                        role="radio"
+                        aria-checked={selected}
                         onClick={() => setGoalId(g.id)}
                         className={cn(
                           'min-h-11 rounded-pill px-3.5 py-1.5 text-callout font-medium transition active:scale-[0.97] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',

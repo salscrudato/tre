@@ -42,8 +42,9 @@ export type HousePowerProps = {
   // Optional target town price: when set, shows a marker and a read against it. Absent
   // by default, because the plan is the down payment goal, not a home price.
   targetHomePrice?: number
-  // The everyday (discretionary) monthly budget. The savings slider drags this down, and
-  // the amount trimmed becomes extra savings that lifts the affordable price live.
+  // The truly discretionary (optional) monthly budget: dining, subscriptions, and the
+  // like. The slider drags this down, and the amount trimmed becomes extra savings that
+  // lifts the affordable price live. Essentials like groceries are never on the table here.
   discBudget?: number
   today: Date
   // The monthly payment (PITI) range the live dial explores, and a callback to persist
@@ -62,7 +63,7 @@ export function HousePower({ house, targetHomePrice, discBudget = 0, today, piti
   // The budgeted monthly savings already going to the house (from the plan). The slider
   // adds to this by trimming everyday spending.
   const baselineSavings = house.baselineMonthlyContribution
-  // The everyday (discretionary) budget is the slider: drag it down to save more toward
+  // The discretionary (optional) budget is the slider: drag it down to save more toward
   // the house. Re-seed from the live budget until the couple moves it (the PITI re-seed
   // pattern), so a cold load lands on the real budget rather than a stale zero.
   const [everydaySpend, setEverydaySpend] = useState(discBudget)
@@ -270,7 +271,7 @@ export function HousePower({ house, targetHomePrice, discBudget = 0, today, piti
       <div className="mt-5 flex flex-col gap-2 border-t border-line pt-5">
         <div className="flex items-center justify-between text-callout">
           <label htmlFor="target-piti" className="text-ink-2">
-            Monthly payment (PITI)
+            Monthly house payment
           </label>
           <span className="flex items-center gap-0.5">
             <StepButton
@@ -305,22 +306,23 @@ export function HousePower({ house, targetHomePrice, discBudget = 0, today, piti
           className="w-full accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
         />
         <p className="text-caption text-ink-2">
-          The full monthly payment we plan for. Higher payment, more home. Saved as our target.
+          Moving this dial saves it as our target payment across the app: the full monthly house payment, which is the
+          loan payment plus property taxes and insurance. Higher payment, more home.
         </p>
       </div>
 
-      {/* The savings already going in from the budget, then the lever: trim everyday
-          spending to save more and buy more home. */}
+      {/* The savings already going in from the budget, then the lever: trim optional
+          spending to save more and buy more home. Essentials like groceries stay put. */}
       {discBudget > 0 && (
         <div className="mt-5 flex flex-col gap-2">
           <div className="flex items-center justify-between text-callout">
-            <label htmlFor="everyday-spend" className="text-ink-2">
-              Monthly everyday spending
+            <label htmlFor="discretionary-spend" className="text-ink-2">
+              Monthly optional spending
             </label>
             <span className="flex items-center gap-0.5">
               <StepButton
                 dir="dec"
-                ariaLabel="Lower everyday spending by 50"
+                ariaLabel="Lower optional spending by 50"
                 disabled={clampedSpend <= 0}
                 onClick={() => stepSpend(-50)}
               />
@@ -329,20 +331,20 @@ export function HousePower({ house, targetHomePrice, discBudget = 0, today, piti
               </span>
               <StepButton
                 dir="inc"
-                ariaLabel="Raise everyday spending by 50"
+                ariaLabel="Raise optional spending by 50"
                 disabled={clampedSpend >= discBudget}
                 onClick={() => stepSpend(50)}
               />
             </span>
           </div>
           <input
-            id="everyday-spend"
+            id="discretionary-spend"
             type="range"
             min={0}
             max={Math.max(discBudget, 1)}
             step={50}
             value={clampedSpend}
-            aria-valuetext={`${formatCurrency(clampedSpend, { cents: false })} per month on everyday spending`}
+            aria-valuetext={`${formatCurrency(clampedSpend, { cents: false })} per month on optional spending`}
             onChange={(event) => {
               setSpendTouched(true)
               setEverydaySpend(Number(event.target.value))
@@ -357,7 +359,7 @@ export function HousePower({ house, targetHomePrice, discBudget = 0, today, piti
                   budget
                 </>
               ) : (
-                'Trim everyday spending to save more'
+                'Trim optional spending to save more'
               )}
             </span>
             {extraSaved > 0 && (
@@ -367,9 +369,10 @@ export function HousePower({ house, targetHomePrice, discBudget = 0, today, piti
             )}
           </div>
           <p className="text-caption text-ink-2">
-            Every dollar you trim from everyday spending goes toward the home and lifts the price above. The down
-            payment bucket grows at <span className="tnum">{Math.round(downReturn * 1000) / 10}</span> percent a year,
-            kept de-risked for the purchase.
+            This dial is for exploring only, it moves no real money. It shows how much more home you could afford if the
+            trimmed amount were saved toward the house instead. The down payment bucket grows at{' '}
+            <span className="tnum">{Math.round(downReturn * 1000) / 10}</span> percent a year, kept in safer, steadier
+            savings so the money is there when we buy.
           </p>
           {/* An honest nudge to act on the trim: it opens Bills to set a real monthly house
               savings, rather than pretending the drag moved any money. */}

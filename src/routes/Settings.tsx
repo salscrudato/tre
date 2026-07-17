@@ -15,6 +15,7 @@ import { HouseholdSection } from '../components/settings/HouseholdSection'
 import { GoalsGrid, AccountsGrid } from '../components/settings/SettingsGrids'
 import { ChevronLeftIcon, ChevronRightIcon } from '../components/icons/ui'
 import { Button } from '../components/Button'
+import { useInstallPrompt } from '../hooks/useInstallPrompt'
 import { cn } from '../lib/cn'
 
 // The Betterment bank sync pulls in react-plaid-link (the heaviest piece of the Settings
@@ -62,7 +63,7 @@ const MOBILE_SECTIONS: MobileSection[] = [
   { key: 'plaid', group: 'Savings and house', label: 'Bank sync', blurb: 'Pull balances from Betterment automatically.', render: () => (<Suspense fallback={<PlaidFallback />}><PlaidSection /></Suspense>) },
   { key: 'accounts', group: 'Savings and house', label: 'Accounts', blurb: 'Balances and what counts toward the house.', render: () => <AccountsSection /> },
   { key: 'goals', group: 'Savings and house', label: 'Goals', blurb: 'Savings targets and their dates.', render: () => <GoalsSection /> },
-  { key: 'assumptions', group: 'Setup', label: 'Assumptions', blurb: 'Returns, mortgage rate, and the house target.', render: () => <AssumptionsSection /> },
+  { key: 'assumptions', group: 'Setup', label: 'Budget and projections', blurb: 'The house target, the mortgage rate, and how fast savings are assumed to grow.', render: () => <AssumptionsSection /> },
   { key: 'household', group: 'Setup', label: 'Household', blurb: 'Who shares this household.', render: () => <HouseholdSection /> },
 ]
 
@@ -187,11 +188,41 @@ function SettingsIndex({ onOpen, onSignOut }: { onOpen: (key: string) => void; o
         )
       })}
 
-      <div className="flex justify-center pb-2 pt-1">
+      <InstallRow />
+
+      <div className="flex flex-col items-center gap-3 pb-2 pt-1">
         <Button variant="secondary" onClick={onSignOut}>
           Sign out
         </Button>
+        <a
+          href="/privacy.html"
+          className="text-caption text-muted underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          Privacy
+        </a>
       </div>
+    </div>
+  )
+}
+
+// The install affordance: a real button where the browser offers a prompt, the
+// Share-sheet hint on iOS Safari, and nothing once the app is already installed.
+function InstallRow() {
+  const { canPrompt, showIosHint, promptInstall } = useInstallPrompt()
+  if (!canPrompt && !showIosHint) return null
+  return (
+    <div className="card-surface flex items-center justify-between gap-3 rounded-xl bg-surface px-4 py-3 shadow-sm">
+      <span className="min-w-0">
+        <span className="block text-callout font-medium text-ink">Put Tre on your home screen</span>
+        <span className="block text-caption text-muted">
+          {canPrompt ? 'One tap to install; it opens like a native app.' : 'In Safari: tap Share, then Add to Home Screen.'}
+        </span>
+      </span>
+      {canPrompt && (
+        <Button variant="secondary" onClick={promptInstall}>
+          Install
+        </Button>
+      )}
     </div>
   )
 }
@@ -236,8 +267,8 @@ type WorkspaceSection = {
 const SECTIONS: WorkspaceSection[] = [
   { key: 'accounts', label: 'Accounts', blurb: 'Balances and which ones count toward the house.', wide: true, render: () => <AccountsGrid /> },
   { key: 'goals', label: 'Goals', blurb: 'Savings goals and their targets.', wide: true, render: () => <GoalsGrid /> },
-  { key: 'assumptions', label: 'Assumptions', blurb: 'Returns, mortgage rate, and the house target.', render: () => <AssumptionsSection /> },
-  { key: 'integrations', label: 'Bank sync', blurb: 'Pull balances from Betterment automatically.', render: () => (<Suspense fallback={<PlaidFallback />}><PlaidSection /></Suspense>) },
+  { key: 'assumptions', label: 'Budget and projections', blurb: 'The house target, the mortgage rate, and how fast savings are assumed to grow.', render: () => <AssumptionsSection /> },
+  { key: 'plaid', label: 'Bank sync', blurb: 'Pull balances from Betterment automatically.', render: () => (<Suspense fallback={<PlaidFallback />}><PlaidSection /></Suspense>) },
   { key: 'household', label: 'Household', blurb: 'Who is in the household.', render: () => <HouseholdSection /> },
 ]
 
@@ -293,6 +324,14 @@ function SettingsDesktop() {
           </header>
           <div className={cn(!active.wide && 'max-w-[680px]')}>{active.render()}</div>
         </div>
+      </div>
+      <div className="pt-2">
+        <a
+          href="/privacy.html"
+          className="text-caption text-muted underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          Privacy
+        </a>
       </div>
     </div>
   )

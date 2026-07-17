@@ -23,8 +23,8 @@ export default function Login() {
         <div className="flex flex-col gap-2">
           <h1 className="text-display text-ink">{APP_NAME}</h1>
           <p className="max-w-[320px] text-body text-ink-2">
-            See what our spending today could become if we invested it instead. Sign in to our
-            household.
+            A calm budget you will actually keep: see where your money goes, and what today's
+            spending could become if you saved it instead.
           </p>
         </div>
       </div>
@@ -48,6 +48,9 @@ export default function Login() {
         >
           {signingIn ? 'Signing in' : 'Continue with Google'}
         </Button>
+        <p className="text-center text-caption text-muted">
+          Invited by a partner? Sign in with the exact email they invited.
+        </p>
         <div className="min-h-5">
           {error != null && (
             <p role="alert" className="inline-flex items-center gap-1.5 text-center text-caption text-danger">

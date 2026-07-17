@@ -136,7 +136,7 @@ export function GoalsGrid() {
       onAddRow={() => create.mutate({ name: 'New goal', target: 0, current: 0, targetDate: defaultDate, color: CATEGORY_PALETTE[0], priority: nextPriority, note: '' })}
       onDeleteRow={(r) => remove.mutate(r.id)}
       addLabel="Add goal"
-      footer={<span className="text-caption text-muted">Needs is the monthly saving to reach each goal by its date: the House goal grows at the de-risked rate, other goals at the assumed return. The House goal balance is summed from accounts flagged as house savings.</span>}
+      footer={<span className="text-caption text-muted">Needs is the monthly saving to reach each goal by its date: the House goal grows at the safer down payment rate, other goals at the assumed return. The House goal balance is summed from accounts flagged as house savings.</span>}
       emptyLabel="No goals yet. Add your first one."
       errorLabel="Could not load goals. Check your connection."
     />

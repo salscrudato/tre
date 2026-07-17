@@ -5,12 +5,15 @@
 
 import type { Timestamp } from 'firebase/firestore'
 
-export type MemberName = 'Sal' | 'Lisa'
+// A member's display label (a first name). Owners are plain strings resolved from the
+// household's memberNames map, never a hardcoded union, so any household's names work.
+export type MemberName = string
 // Who a budget item belongs to. A bill can be one person's or shared by both, so the
-// Budget and Spending owner toggle can show each of us our own items and the shared
+// Budget and Spending owner toggle can show each person their own items and the shared
 // picture. Income and logged expenses stay per person (a paycheck and a tap each have
-// one owner); only bills carry the shared option.
-export type BillOwner = MemberName | 'Both'
+// one owner); only bills carry the shared option. 'Both' is the shared sentinel.
+export type BillOwner = string
+export const SHARED_OWNER = 'Both'
 export type CategoryType = 'fixed' | 'variable' | 'savings'
 
 // How a recurring bill maps to home buying power. Housing is our home and is never
@@ -73,9 +76,13 @@ export interface Household {
   name: string
   members: string[]
   // Emails invited to join this household. A signed-in user whose email is listed
-  // here can add their own uid to members (see firestore.rules), so a spouse joins
+  // here can add their own uid to members (see firestore.rules), so a partner joins
   // by signing in instead of any out-of-band step.
   invitedEmails?: string[]
+  // Display names by member uid (first names). Owner pickers and per-person views
+  // read these. Households created before this field derive names from the owner
+  // strings already stored on incomes and bills, so older data keeps working.
+  memberNames?: Record<string, string>
   settings: HouseholdSettings
   createdAt?: Timestamp
 }
@@ -87,6 +94,13 @@ export interface Category {
   color: string
   icon: string
   order: number
+  // For an everyday (variable) category only: whether the spending is an essential need
+  // (groceries, health) or truly discretionary (dining, subscriptions). Only "wants" are
+  // ever called discretionary anywhere in the app. Absent on older categories; the app
+  // derives a sensible default from the name (see src/lib/categoryKind.ts) and persists
+  // this only when the couple sets it explicitly, mirroring how a bill's lever works.
+  // Ignored for fixed and savings categories.
+  essential?: boolean
 }
 
 export interface Income {
@@ -97,9 +111,9 @@ export interface Income {
   frequency: IncomeFrequency
   payDays: number[]
   // When set, this income only counts from this month onward, modeling a job or raise
-  // that starts later (Lisa's teaching pay begins in September). Stored as "YYYY-MM" or
-  // a full ISO date; absent means it has always been in effect. The house pace and date
-  // step up when it begins, instead of assuming the higher amount from today.
+  // that starts later (a teaching contract that begins in September). Stored as
+  // "YYYY-MM" or a full ISO date; absent means it has always been in effect. The house
+  // pace and date step up when it begins, instead of assuming the higher amount today.
   startMonth?: string
   note?: string
 }
@@ -110,8 +124,9 @@ export interface FixedExpense {
   amount: number
   categoryId: string
   dueDay: number
-  // Sal, Lisa, or Both (a shared bill like rent or utilities). Older bills stored a
-  // single member; that still reads correctly, and Both is opt-in from the bill editor.
+  // One member's name, or Both (a shared bill like rent or utilities). Older bills
+  // stored a single member; that still reads correctly, and Both is opt-in from the
+  // bill editor.
   owner: BillOwner
   active: boolean
   endDate?: string
@@ -200,16 +215,16 @@ export interface Account {
   name: string
   type: AccountType
   balance: number
-  // When true, this balance counts toward the house down payment savings (the House
-  // bucket, Cash, Lisa's savings). The House goal progress sums these.
+  // When true, this balance counts toward the house down payment savings. The House
+  // goal progress sums the flagged balances.
   countsTowardHouse?: boolean
   // When set on a counted account, only this portion of the balance counts toward the
   // house, not the whole balance. Used for Build Wealth, where a configurable slice
   // closes the gap to the down payment goal and the rest stays invested for other ends.
   // Absent means the full balance counts. Clamped to the balance when summed.
   houseAllocation?: number
-  // The Plaid account id this maps to, set when balances sync from Betterment. Manual
-  // accounts (Lisa's savings) leave this unset and are never overwritten by a sync.
+  // The Plaid account id this maps to, set when balances sync from a linked
+  // brokerage. Manual accounts leave this unset and are never overwritten by a sync.
   plaidAccountId?: string
   allocation?: string
   note?: string

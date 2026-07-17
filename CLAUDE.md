@@ -4,7 +4,7 @@ Master context for Claude Code. Read this file, then `docs/ARCHITECTURE.md` and 
 
 ## What we are building
 
-**Nest** is a private, two-person household finance PWA for a married couple (Sal and Lisa). It is not a product for sale. It has exactly two users and one shared household. The single purpose: see the real-time and future-cost impact of spending so the couple can maximize savings toward a house down payment by September 2027, targeting a monthly mortgage payment (PITI) of 5,000 to 6,000.
+**Nest** is a private household finance PWA for a couple. Each household has its own private data; a new user creates a household through the guided first run and can invite one partner. The single purpose: see the real-time and future-cost impact of spending so the couple can maximize savings toward a house down payment by September 2027, targeting a monthly mortgage payment (PITI) of 5,000 to 6,000.
 
 The home screen is the product's center of gravity: it opens directly into a frictionless Quick Add (pick a category or Other, type an amount, log it), with the dashboard one tap away. Everything the couple's situation depends on (categories, income, fixed amounts, goals, and the projection assumptions) is configurable in settings.
 

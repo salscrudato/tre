@@ -1,10 +1,12 @@
-// One-time seed (2026-07-02): create the two named fixed savings transfers that now
-// drive the house pace, House Savings - Sal (5000/month) and House Savings - Lisa
-// (1000/month), both funding goal_house from cat_savings. Also aligns the savings
-// budget line to the transfers and deactivates any other active house-goal savings
-// bill so the pace counts exactly these two. Idempotent: safe to re-run.
+// Admin utility: create or align the named monthly savings transfers that drive the
+// house pace for a household. Fully generic: the household id, owner names, and
+// amounts come from the environment, never from this file. Idempotent: safe to
+// re-run; it upserts the transfers, deactivates any other active house-goal savings
+// bill, mirrors the savings budget line, and clears a stale pace override.
 //
-// Run: npx tsx scripts/seed-house-savings.ts
+// Run:
+//   HOUSEHOLD_ID=<id> TRANSFERS='[{"id":"fx_savings_a","name":"House savings","amount":500,"owner":"Alex"}]' \
+//     npx tsx scripts/seed-house-savings.ts
 
 import { initializeApp, applicationDefault } from 'firebase-admin/app'
 import { FieldValue, getFirestore } from 'firebase-admin/firestore'
@@ -12,28 +14,26 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore'
 initializeApp({ credential: applicationDefault(), projectId: 'sallisascru' })
 const db = getFirestore()
 
-const HOUSEHOLD = 'households/primary'
+interface Transfer {
+  id: string
+  name: string
+  amount: number
+  owner: string
+}
 
-const TRANSFERS = [
-  {
-    id: 'fx_savings_sal',
-    name: 'House Savings - Sal',
-    amount: 5000,
-    owner: 'Sal',
-  },
-  {
-    id: 'fx_savings_lisa',
-    name: 'House Savings - Lisa',
-    amount: 1000,
-    owner: 'Lisa',
-  },
-] as const
+const householdId = process.env.HOUSEHOLD_ID
+const transfersRaw = process.env.TRANSFERS
 
 async function main() {
-  const keepIds = new Set<string>(TRANSFERS.map((t) => t.id))
+  if (!householdId || !transfersRaw) {
+    throw new Error('Set HOUSEHOLD_ID and TRANSFERS (a JSON array of {id, name, amount, owner}).')
+  }
+  const transfers = JSON.parse(transfersRaw) as Transfer[]
+  const household = `households/${householdId}`
+  const keepIds = new Set<string>(transfers.map((t) => t.id))
 
-  for (const transfer of TRANSFERS) {
-    await db.doc(`${HOUSEHOLD}/fixedExpenses/${transfer.id}`).set(
+  for (const transfer of transfers) {
+    await db.doc(`${household}/fixedExpenses/${transfer.id}`).set(
       {
         name: transfer.name,
         amount: transfer.amount,
@@ -51,11 +51,8 @@ async function main() {
   }
 
   // Any other active savings bill funding the house goal would inflate the pace on
-  // top of the two named transfers; deactivate it and say so.
-  const others = await db
-    .collection(`${HOUSEHOLD}/fixedExpenses`)
-    .where('goalId', '==', 'goal_house')
-    .get()
+  // top of the named transfers; deactivate it and say so.
+  const others = await db.collection(`${household}/fixedExpenses`).where('goalId', '==', 'goal_house').get()
   for (const doc of others.docs) {
     if (keepIds.has(doc.id)) continue
     if (doc.data().active === true) {
@@ -64,18 +61,16 @@ async function main() {
     }
   }
 
-  // The savings budget line mirrors the transfers (6000), so the Settings grid and
-  // the budget view agree with the pace.
-  await db.doc(`${HOUSEHOLD}/budget/template`).set(
-    { byCategoryId: { cat_savings: 6000 } },
-    { merge: true },
-  )
-  console.log('Budget template: cat_savings set to 6000')
+  // The savings budget line mirrors the transfers, so the Settings grid and the
+  // budget view agree with the pace.
+  const total = transfers.reduce((sum, t) => sum + t.amount, 0)
+  await db.doc(`${household}/budget/template`).set({ byCategoryId: { cat_savings: total } }, { merge: true })
+  console.log(`Budget template: cat_savings set to ${total}`)
 
   // The pace must come from the bills, not a stale override.
-  const householdRef = db.doc(HOUSEHOLD)
-  const household = await householdRef.get()
-  const settings = household.data()?.settings as Record<string, unknown> | undefined
+  const householdRef = db.doc(household)
+  const snapshot = await householdRef.get()
+  const settings = snapshot.data()?.settings as Record<string, unknown> | undefined
   if (settings && settings.houseContributionMonthly != null) {
     await householdRef.update({ 'settings.houseContributionMonthly': FieldValue.delete() })
     console.log('Cleared settings.houseContributionMonthly so the transfers drive the pace')
@@ -86,4 +81,4 @@ async function main() {
   console.log('Done.')
 }
 
-main().then(() => process.exit(0))
+main().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1) })

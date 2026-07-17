@@ -1,22 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { cn } from '../lib/cn'
-import { BudgetIcon, DashboardIcon, HomeIcon, HouseKeyIcon, SettingsIcon, WalletIcon } from './icons/nav'
-import type { ComponentType } from 'react'
-
-type Dest = { to: string; label: string; Icon: ComponentType<{ size?: number }>; end?: boolean }
-
-// The primary destinations, in two quiet groups so the menu stays minimal: the daily
-// money screens first (log, see where we stand, the plan, income, the house), then
-// Settings on its own as configuration. One source of truth shared by the mobile drawer
-// and the desktop sidebar (both render NavList), so the two never drift apart.
-const DAILY: Dest[] = [
-  { to: '/', label: 'Home', Icon: HomeIcon, end: true },
-  { to: '/spending', label: 'Spending', Icon: DashboardIcon },
-  { to: '/budget', label: 'Budget', Icon: BudgetIcon },
-  { to: '/income', label: 'Income', Icon: WalletIcon },
-  { to: '/house', label: 'House', Icon: HouseKeyIcon },
-]
-const CONFIG: Dest[] = [{ to: '/settings', label: 'Settings', Icon: SettingsIcon }]
+import { CONFIG, DAILY, type Dest } from './navRoutes'
 
 function Item({ to, label, Icon, end, onNavigate }: Dest & { onNavigate?: () => void }) {
   return (

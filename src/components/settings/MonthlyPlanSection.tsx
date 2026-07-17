@@ -12,10 +12,10 @@ import { Card } from '../Card'
 import { Money } from '../Money'
 import { Spinner } from '../Spinner'
 
-// The plan at a glance: income in, fixed costs out, the discretionary budget, any other
-// goal contributions, and the surplus that is free to build the home. Read-only; it
-// sits above the editable sections and reconciles to the same numbers every screen
-// shows. The surplus is our default monthly house contribution (adjustable in Budget
+// The plan at a glance: income in, fixed costs out, everyday essentials, the discretionary
+// budget, any other goal contributions, and the surplus that is free to build the home.
+// Read-only; it sits above the editable sections and reconciles to the same numbers every
+// screen shows. The surplus is our default monthly house contribution (adjustable in Budget
 // and projections), so the plan reflects our real money, not one small auto-transfer.
 export function MonthlyPlanSection({ onSetHouseSavings }: { onSetHouseSavings?: () => void } = {}) {
   const { household } = useHousehold()
@@ -47,7 +47,12 @@ export function MonthlyPlanSection({ onSetHouseSavings }: { onSetHouseSavings?: 
         <div className="flex flex-col gap-3">
           <Row label="Income in" amount={plan.incomeMonthly} />
           <Row label="Fixed costs out" amount={plan.committedFixedMonthly} muted />
-          <Row label="Discretionary budget" amount={plan.discretionaryBudgetMonthly} muted />
+          {plan.essentialBudgetMonthly > 0 && (
+            <Row label="Everyday essentials" amount={plan.essentialBudgetMonthly} muted />
+          )}
+          {plan.discretionaryBudgetMonthly > 0 && (
+            <Row label="Optional extras" amount={plan.discretionaryBudgetMonthly} muted />
+          )}
           {plan.otherGoalContributionsMonthly > 0 && (
             <Row label="Other savings goals" amount={plan.otherGoalContributionsMonthly} muted />
           )}
@@ -66,8 +71,8 @@ export function MonthlyPlanSection({ onSetHouseSavings }: { onSetHouseSavings?: 
                 />
               </div>
               <p className="text-caption text-muted">
-                The named transfers (House Savings - Sal, House Savings - Lisa) drive the house pace. The leftover is
-                the work still on the table: sweep it toward the home whenever the month ends under budget.
+                Your automatic savings transfers drive the house pace. The leftover is the work still on the table:
+                sweep it toward the home whenever the month ends under budget.
               </p>
             </>
           ) : (

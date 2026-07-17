@@ -5,6 +5,7 @@ import {
   buildResponse,
   groupReceipt,
   isCalendarDate,
+  matchCategory,
   normalizeItems,
   parseExtraction,
   type ParsedExtraction,
@@ -89,6 +90,53 @@ describe('isCalendarDate and normalizeItems', () => {
     )
     expect(items).toHaveLength(1)
     expect(items[0].amount).toBe(4.25)
+  })
+})
+
+describe('matchCategory', () => {
+  const names = ['Groceries', 'Personal Care', 'Dining', 'Health', 'Subscriptions', 'Other']
+
+  it('matches exact and lightly reworded labels', () => {
+    expect(matchCategory('Groceries', names)).toBe('Groceries')
+    expect(matchCategory('grocery', names)).toBe('Groceries')
+    expect(matchCategory('Personal care', names)).toBe('Personal Care')
+  })
+
+  it('routes common receipt words to the right category, not Other', () => {
+    // A supermarket run spanning groceries, personal care, and health, plus a non-essential.
+    expect(matchCategory('Toiletries', names)).toBe('Personal Care')
+    expect(matchCategory('Cosmetics', names)).toBe('Personal Care')
+    expect(matchCategory('Pharmacy', names)).toBe('Health')
+    expect(matchCategory('Snacks', names)).toBe('Groceries')
+    expect(matchCategory('Household', names)).toBe('Groceries')
+    expect(matchCategory('Streaming', names)).toBe('Subscriptions')
+  })
+
+  it('falls back to Other for a genuine unknown or empty label', () => {
+    expect(matchCategory('Electronics', names)).toBe('Other')
+    expect(matchCategory('', names)).toBe('Other')
+  })
+
+  it('routes a shared "care" phrase by its leading word, and catches statement labels', () => {
+    const full = [...names, 'Childcare', 'Transportation']
+    expect(matchCategory('Health Care', full)).toBe('Health')
+    expect(matchCategory('Baby Care', full)).toBe('Childcare')
+    expect(matchCategory('Child Care', full)).toBe('Childcare')
+    expect(matchCategory('Meals', full)).toBe('Dining')
+    expect(matchCategory('Baby', full)).toBe('Childcare')
+  })
+
+  it('normalizeItems routes a mixed supermarket run into three real categories', () => {
+    const items = normalizeItems(
+      [
+        item({ description: 'Bananas', category: 'Produce' }),
+        item({ description: 'Shampoo', category: 'Toiletries' }),
+        item({ description: 'Ibuprofen', category: 'Pharmacy' }),
+        item({ description: 'Phone case', category: 'Electronics' }),
+      ],
+      names,
+    )
+    expect(items.map((i) => i.category)).toEqual(['Groceries', 'Personal Care', 'Health', 'Other'])
   })
 })
 

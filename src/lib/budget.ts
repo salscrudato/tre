@@ -1,6 +1,6 @@
-// The household budget view, built the way Lisa's spreadsheet works: Spent counts
-// only what we actually log, never the fixed bills. Fixed costs are shown separately
-// as our committed monthly total (money already spoken for). For every category we
+// The household budget view, built the way a shared spreadsheet works: Spent counts
+// only what is actually logged, never the fixed bills. Fixed costs are shown separately
+// as the committed monthly total (money already spoken for). For every category we
 // surface the monthly plan and an annualized (times twelve) plan, the spent this
 // month and year to date, and the remainder. Categories are grouped by type so fixed,
 // discretionary, and savings are never mixed in one undifferentiated list.
@@ -8,6 +8,7 @@
 // Nothing is double counted: total spent is the sum of logged transactions only.
 
 import type { Category, CategoryType, FixedExpense, Transaction } from '../types'
+import { isEssentialCategory } from './categoryKind'
 import { billActiveOn, billMonthlyAmount } from './summary'
 
 const MONTHS_PER_YEAR = 12
@@ -26,12 +27,14 @@ export function isCountedSpend(tx: Pick<Transaction, 'kind'>): boolean {
 // logged spend in non-savings categories. Logging to a savings bucket is saving, not
 // spending, so it never lowers the rate. Bills past their end date no longer count.
 //
-// A bill (fixed) category is special: the app invites logging the ACTUAL charge into it
-// to compare with the plan (see categoryTypeHint), so counting both the committed bill
-// and that same logged charge would double count the money. For each fixed category we
-// therefore count max(committed plan, logged actual) exactly once: the plan when nothing
-// (or an under-plan charge) is logged, the actual when it runs over plan or has no active
-// bill. Variable and unknown categories count their logged spend in full, as before.
+// A category with active bills is special: the app invites logging the ACTUAL charge
+// into it to compare with the plan (see categoryTypeHint), so counting both the
+// committed bill and that same logged charge would double count the money. For every
+// non-savings category with active bills (a fixed category like Utilities, or a
+// variable category carrying a subscription bill) we therefore count
+// max(committed plan, logged actual) exactly once: the plan when nothing (or an
+// under-plan charge) is logged, the actual when it runs over the plan. Categories
+// without bills (and deleted categories) count their logged spend in full.
 export function savingsRateMonthly(
   income: number,
   fixed: FixedExpense[],
@@ -45,42 +48,39 @@ export function savingsRateMonthly(
   const activeNonSavingsBills = fixed.filter(
     (f) => f.active && billActiveOn(f, today) && typeById.get(f.categoryId) !== 'savings',
   )
-  const committedNonSavings = activeNonSavingsBills.reduce((sum, f) => sum + billMonthlyAmount(f), 0)
 
-  // The committed monthly plan per FIXED category, to net against actuals logged there.
-  const committedByFixedCat = new Map<string, number>()
+  // The committed monthly plan per category with bills, to net against actuals there.
+  const committedByBillCat = new Map<string, number>()
   for (const f of activeNonSavingsBills) {
-    if (typeById.get(f.categoryId) === 'fixed') {
-      committedByFixedCat.set(f.categoryId, (committedByFixedCat.get(f.categoryId) ?? 0) + billMonthlyAmount(f))
-    }
+    committedByBillCat.set(f.categoryId, (committedByBillCat.get(f.categoryId) ?? 0) + billMonthlyAmount(f))
   }
 
-  // Logged actuals in fixed categories are pooled separately so only their excess over the
-  // plan adds to spend; everything else (variable, or a deleted category) counts in full.
-  const loggedByFixedCat = new Map<string, number>()
+  // Logged actuals in bill-carrying categories are pooled separately so each such
+  // category counts once as max(plan, actual); everything else counts in full.
+  const loggedByBillCat = new Map<string, number>()
   let loggedOther = 0
   for (const t of monthTx) {
     if (!isCountedSpend(t)) continue
     const type = typeById.get(t.categoryId)
     if (type === 'savings') continue
-    if (type === 'fixed') {
-      loggedByFixedCat.set(t.categoryId, (loggedByFixedCat.get(t.categoryId) ?? 0) + t.amount)
+    if (committedByBillCat.has(t.categoryId)) {
+      loggedByBillCat.set(t.categoryId, (loggedByBillCat.get(t.categoryId) ?? 0) + t.amount)
     } else {
       loggedOther += t.amount
     }
   }
-  let fixedExcess = 0
-  for (const [categoryId, logged] of loggedByFixedCat) {
-    fixedExcess += Math.max(0, logged - (committedByFixedCat.get(categoryId) ?? 0))
+  let billCatSpend = 0
+  for (const [categoryId, committed] of committedByBillCat) {
+    billCatSpend += Math.max(committed, loggedByBillCat.get(categoryId) ?? 0)
   }
 
-  const saved = income - committedNonSavings - loggedOther - fixedExcess
+  const saved = income - billCatSpend - loggedOther
   return Math.max(0, Math.min(1, saved / income))
 }
 
 export interface CategoryRow {
   category: Category
-  // Discretionary plan: the monthly budget and its annualized (times twelve) form.
+  // Everyday plan: the monthly budget and its annualized (times twelve) form.
   monthBudget: number
   yearBudget: number
   // Spent counts only logged transactions, this month and year to date.
@@ -110,7 +110,7 @@ export interface BudgetView {
   // Headline figures. Spent is logged only.
   monthSpent: number
   yearSpent: number
-  // The discretionary plan (where the house countdown applies).
+  // The full everyday plan (all variable categories, needs and wants together).
   discMonthBudget: number
   discYearBudget: number
   // Committed monthly costs (fixed bills) and committed monthly savings contributions.
@@ -226,15 +226,34 @@ export function buildBudgetView(
   }
 }
 
-// The planned monthly discretionary budget: the sum of the per-category budgets for the
-// discretionary (variable) categories. This is the single source of truth, edited only
-// in the Discretionary section of Settings. Home, the Spending tab, and Optimize read it
-// here rather than from a separate stored scalar that could silently drift out of step.
-export function discretionaryBudget(
+// Sum the per-category budgets for the variable categories that pass a predicate. The
+// three helpers below are the single source of truth for the everyday plan and its honest
+// needs versus wants split, so the Income allocation, the monthly plan, Home, and Optimize
+// all agree instead of reading a stored scalar that could drift.
+function sumVariableBudget(
   categories: Category[],
   byCategoryId: Record<string, number>,
+  keep: (category: Category) => boolean,
 ): number {
   return categories
-    .filter((c) => c.type === 'variable')
+    .filter((c) => c.type === 'variable' && keep(c))
     .reduce((sum, c) => sum + (byCategoryId[c.id] ?? 0), 0)
+}
+
+// The full everyday budget: every variable category, needs and wants together. This is
+// what Home and the Spending tab show as "everyday spending", and what the plan subtracts
+// from income to find the surplus.
+export function everydayBudget(categories: Category[], byCategoryId: Record<string, number>): number {
+  return sumVariableBudget(categories, byCategoryId, () => true)
+}
+
+// The essential slice of the everyday budget: the needs (groceries, health).
+export function essentialBudget(categories: Category[], byCategoryId: Record<string, number>): number {
+  return sumVariableBudget(categories, byCategoryId, isEssentialCategory)
+}
+
+// The truly discretionary slice: the wants (dining, subscriptions, other). This is the
+// only figure the app ever labels "discretionary", so the word always means optional spend.
+export function discretionaryBudget(categories: Category[], byCategoryId: Record<string, number>): number {
+  return sumVariableBudget(categories, byCategoryId, (c) => !isEssentialCategory(c))
 }

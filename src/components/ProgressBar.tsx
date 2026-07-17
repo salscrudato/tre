@@ -15,6 +15,9 @@ export type ProgressBarProps = {
   // Optional 0..100 tick (for example the share of the month elapsed), so the fill can
   // be read against time: fill past the tick means spending faster than the month passes.
   markerPct?: number
+  // When true, this is progress toward something good (savings, a goal): the fill is
+  // always green and there is no over-budget red segment, so filling up reads as winning.
+  positive?: boolean
   className?: string
 }
 
@@ -24,7 +27,7 @@ export type ProgressBarProps = {
 // never the only signal.
 function fillColor(pct: number): string {
   if (pct >= 100) return 'var(--color-danger)'
-  if (pct >= 80) return 'var(--color-warning)'
+  if (pct >= 80) return 'var(--color-warning-fill)'
   return 'var(--color-positive)'
 }
 
@@ -35,13 +38,16 @@ export function ProgressBar({
   currency = true,
   label,
   markerPct,
+  positive = false,
   className,
 }: ProgressBarProps) {
   const pct = max > 0 ? (value / max) * 100 : 0
   const fillPct = Math.max(0, Math.min(pct, 100))
   const showMarker = markerPct != null && markerPct > 0 && markerPct < 100
-  const over = pct > 100
-  const color = fillColor(pct)
+  // Savings progress is never "over budget": filling up is the win, so suppress the red
+  // overflow entirely and keep the fill green.
+  const over = !positive && pct > 100
+  const color = positive ? 'var(--color-positive)' : fillColor(pct)
 
   // Animate the fill width on mount, unless reduced motion is requested.
   const reduced = usePrefersReducedMotion()
@@ -92,13 +98,13 @@ export function ProgressBar({
           style={{ transition: reduced ? undefined : 'opacity var(--dur-fast) var(--ease-spring)' }}
         />
         {showMarker && (
-          <rect x={markerPct - 0.3} y="0" width="0.6" height="8" rx="0.3" fill="var(--color-ink-2)" opacity="0.4" />
+          <rect x={markerPct - 0.6} y="0" width="1.2" height="8" rx="0.6" fill="var(--color-ink)" opacity="0.55" />
         )}
       </svg>
       {showLabel && (
         <div className="flex items-center justify-between text-caption">
           <span className="text-muted">{label ?? valuesText}</span>
-          <span className={cn('tnum font-semibold', over ? 'text-danger' : 'text-ink-2')}>
+          <span className={cn('tnum font-semibold', over ? 'text-danger' : positive ? 'text-positive-strong' : 'text-ink-2')}>
             {Math.round(pct)}%
           </span>
         </div>

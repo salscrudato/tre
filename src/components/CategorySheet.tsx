@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from './icons/ui'
 import { CATEGORY_ICON_KEYS, resolveCategoryIcon } from '../config/icons'
-import { CATEGORY_PALETTE, swatchInk } from '../config/palette'
-import { categoryTypeHint, categoryTypeLabel } from '../lib/summary'
+import { CATEGORY_PALETTE, CATEGORY_PALETTE_NAMES, swatchInk } from '../config/palette'
+import { categoryTypeHint } from '../lib/summary'
+import { categoryKindLabel, defaultEssential } from '../lib/categoryKind'
 import { futureValueRecurring } from '../lib/money'
 import { suggestAppearance } from '../lib/categorySuggest'
 import { formatCurrency, groupAmount, parseAmount, titleCase } from '../lib/format'
 import { Button } from './Button'
+import { ConfirmDeleteButton } from './ConfirmDeleteButton'
 import { Field } from './Field'
 import { Sheet } from './Sheet'
 import { Segmented } from './Segmented'
@@ -15,12 +17,30 @@ import type { Category, CategoryType } from '../types'
 
 export type MoveControls = { canUp: boolean; canDown: boolean; onUp: () => void; onDown: () => void }
 
-export type CategoryFormData = { name: string; type: CategoryType; color: string; icon: string; budget: number }
+export type CategoryFormData = {
+  name: string
+  type: CategoryType
+  color: string
+  icon: string
+  budget: number
+  // Only meaningful for a variable category: whether it is an essential need. Always sent,
+  // false for fixed and savings (they are never "everyday"), so the writer never persists
+  // undefined and consumers can trust the flag.
+  essential: boolean
+}
 
 const TYPE_OPTIONS: Array<{ value: CategoryType; label: string }> = [
   { value: 'variable', label: 'Everyday' },
   { value: 'savings', label: 'Savings' },
   { value: 'fixed', label: 'Bill' },
+]
+
+// The essential versus optional toggle for an everyday category, modeled as a string
+// union so it fits the Segmented control, then mapped to the boolean the model stores.
+type EverydayKind = 'need' | 'want'
+const KIND_OPTIONS: Array<{ value: EverydayKind; label: string }> = [
+  { value: 'need', label: 'Essential' },
+  { value: 'want', label: 'Optional' },
 ]
 
 // The add or edit form for a spending category, shared by the Budget page and the
@@ -51,12 +71,16 @@ export function CategorySheet({
   const [color, setColor] = useState(category?.color ?? CATEGORY_PALETTE[0])
   const [icon, setIcon] = useState(category?.icon ?? 'dots')
   const [budget, setBudget] = useState(initialBudget > 0 ? groupAmount(String(initialBudget)) : '')
+  // Essential need versus optional want, for everyday categories. Seeds from the explicit
+  // flag when editing, otherwise from the name (Groceries starts Essential, Dining Optional).
+  const [essential, setEssential] = useState<boolean>(category?.essential ?? defaultEssential(category?.name ?? ''))
 
-  // While adding, the icon and color follow the name (Groceries arrives green with a cart)
-  // until either is chosen by hand. Editing starts "touched" so an existing appearance is
-  // never overwritten as the couple retypes the name.
+  // While adding, the icon, color, and essential guess follow the name (Groceries arrives
+  // green with a cart, marked essential) until each is chosen by hand. Editing starts
+  // "touched" so an existing choice is never overwritten as the couple retypes the name.
   const [iconTouched, setIconTouched] = useState(category != null)
   const [colorTouched, setColorTouched] = useState(category != null)
+  const [essentialTouched, setEssentialTouched] = useState(category != null)
   useEffect(() => {
     if (iconTouched && colorTouched) return
     const suggestion = suggestAppearance(name)
@@ -64,6 +88,9 @@ export function CategorySheet({
     if (!iconTouched) setIcon(suggestion.icon)
     if (!colorTouched) setColor(suggestion.color)
   }, [name, iconTouched, colorTouched])
+  useEffect(() => {
+    if (!essentialTouched) setEssential(defaultEssential(name))
+  }, [name, essentialTouched])
 
   const canSave = name.trim().length > 0
   const PreviewIcon = resolveCategoryIcon(icon)
@@ -81,11 +108,7 @@ export function CategorySheet({
       title={category ? 'Edit category' : 'Add category'}
       footer={
         <div className="flex gap-3">
-          {canDelete && onDelete && (
-            <Button variant="destructive" onClick={onDelete}>
-              Delete
-            </Button>
-          )}
+          {canDelete && onDelete && <ConfirmDeleteButton onConfirm={onDelete} />}
           <Button
             fullWidth
             disabled={!canSave}
@@ -96,6 +119,7 @@ export function CategorySheet({
                 color,
                 icon,
                 budget: Math.round((parseAmount(budget) || 0) * 100) / 100,
+                essential: type === 'variable' ? essential : false,
               })
             }
           >
@@ -117,7 +141,9 @@ export function CategorySheet({
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-h3 text-ink">{previewName}</p>
-            <p className="truncate text-caption text-muted">{categoryTypeLabel(type)}</p>
+            <p className="truncate text-caption text-muted">
+              {categoryKindLabel(type, type === 'variable' ? essential : false)}
+            </p>
           </div>
         </div>
 
@@ -134,6 +160,25 @@ export function CategorySheet({
           <Segmented value={type} onChange={setType} options={TYPE_OPTIONS} ariaLabel="Category behavior" />
           <p className="text-caption text-muted">{categoryTypeHint(type)}</p>
         </div>
+        {type === 'variable' && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-caption text-ink-2">Is this a need or a want?</span>
+            <Segmented
+              value={essential ? 'need' : 'want'}
+              onChange={(next) => {
+                setEssential(next === 'need')
+                setEssentialTouched(true)
+              }}
+              options={KIND_OPTIONS}
+              ariaLabel="Essential or optional"
+            />
+            <p className="text-caption text-muted">
+              {essential
+                ? 'A need, like groceries or health. It never gets suggested as something to cut.'
+                : 'Optional spending, like dining or subscriptions. This is the spending you can trim to save more.'}
+            </p>
+          </div>
+        )}
         <Field
           label="Monthly budget"
           inputMode="decimal"
@@ -170,13 +215,13 @@ export function CategorySheet({
               <button
                 key={swatch}
                 type="button"
-                aria-label={`Color ${index + 1}`}
+                aria-label={CATEGORY_PALETTE_NAMES[index] ?? `Color ${index + 1}`}
                 aria-pressed={color === swatch}
                 onClick={() => {
                   setColor(swatch)
                   setColorTouched(true)
                 }}
-                className="flex h-9 w-9 items-center justify-center rounded-full transition active:scale-[0.92] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+                className="flex h-11 w-11 items-center justify-center rounded-full transition active:scale-[0.92] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
                 style={{
                   backgroundColor: swatch,
                   boxShadow: color === swatch ? `0 0 0 2px var(--color-surface), 0 0 0 4px ${swatch}` : undefined,

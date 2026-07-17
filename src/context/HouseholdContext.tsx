@@ -1,134 +1,206 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { doc, onSnapshot } from 'firebase/firestore'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  collection,
+  doc,
+  getDocs,
+  limit,
+  onSnapshot,
+  query,
+  where,
+  type Unsubscribe,
+} from 'firebase/firestore'
 import { useQueryClient } from '@tanstack/react-query'
 import { db } from '../config/firebase'
-import { DEFAULTS, HOUSEHOLD_ID } from '../config/app'
-import { ensureHousehold } from '../services/bootstrap'
-import { joinHousehold } from '../services/household'
+import { DEFAULTS } from '../config/app'
+import { createHousehold, type OnboardingSetup } from '../services/bootstrap'
+import { joinHousehold, setMemberName } from '../services/household'
+import { setActiveHouseholdId } from '../services/firestore'
+import { firstNameOf } from '../lib/owners'
 import { useAuth } from './auth-context'
-import { HouseholdContext, type Household, type HouseholdStatus } from './household-context'
+import {
+  HouseholdContext,
+  type Household,
+  type HouseholdStatus,
+  type PendingInvite,
+} from './household-context'
 
-// Subscribes to the single shared household and self-heals the first run:
-// - No household yet: create and seed it with this user as the only member.
-// - Household exists and the user is invited but not yet a member: add their uid.
-// - Otherwise: ready, denied, or a real error. A resolved-empty read never spins.
+// Finds the signed-in user's household and keeps it live:
+// - A members query on their own uid finds the household they belong to.
+// - Failing that, an invitedEmails query on their verified email finds an
+//   invitation, which the user explicitly accepts or passes on (never a silent
+//   join: a stray or malicious invite must not capture anyone's data).
+// - Failing both, status is 'none' and the guided first run creates a household.
+// Both queries are provable under the security rules from their own filters, so no
+// query can ever scan another household.
 export function HouseholdProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
   const uid = user?.uid
   const email = user?.email?.toLowerCase() ?? null
+  const emailVerified = user?.emailVerified ?? false
+  const displayName = user?.displayName ?? null
   const queryClient = useQueryClient()
 
   const [household, setHousehold] = useState<Household | null>(null)
   const [status, setStatus] = useState<HouseholdStatus>('loading')
   const [error, setError] = useState<string | null>(null)
-  // Guards so the create and the join each run at most once per uid, even under
-  // repeated snapshots (StrictMode double-mount, optimistic-write rollbacks).
-  const bootstrapAttempt = useRef<string | null>(null)
-  const joinAttempt = useRef<string | null>(null)
+  const [invite, setInvite] = useState<PendingInvite | null>(null)
+  // The adopted household id; a state so adoption re-runs the subscription effect.
+  const [hid, setHid] = useState<string | null>(null)
 
+  // The provider unmounts on sign-out (ProtectedRoute navigates away in the same
+  // commit), so the purge must live in an unmount cleanup: the next account must
+  // never see this session's cached queries or write to its household.
+  useEffect(
+    () => () => {
+      setActiveHouseholdId(null)
+      queryClient.clear()
+    },
+    [queryClient],
+  )
+
+  // Discovery: run once per signed-in user (and again if they sign out and back in).
   useEffect(() => {
     if (!uid) {
       setHousehold(null)
       setStatus('loading')
       setError(null)
-      bootstrapAttempt.current = null
-      joinAttempt.current = null
+      setInvite(null)
+      setHid(null)
+      setActiveHouseholdId(null)
+      // A signed-out session must not leak cached data into the next sign-in.
+      queryClient.clear()
       return
     }
+    const currentUid = uid
+    let cancelled = false
     setStatus('loading')
     setError(null)
-    let cancelled = false
-    const ref = doc(db, 'households', HOUSEHOLD_ID)
 
-    const unsubscribe = onSnapshot(
-      ref,
-      async (snapshot) => {
+    async function discover() {
+      try {
+        const mine = await getDocs(
+          query(collection(db, 'households'), where('members', 'array-contains', currentUid), limit(1)),
+        )
         if (cancelled) return
-
-        if (!snapshot.exists()) {
-          // No household yet: this signed-in user bootstraps and seeds it once.
-          if (bootstrapAttempt.current === uid) return
-          bootstrapAttempt.current = uid
-          setStatus('bootstrapping')
-          try {
-            await ensureHousehold(uid)
-            if (!cancelled) queryClient.invalidateQueries()
-          } catch {
-            if (!cancelled) {
-              // Allow a later snapshot (or reload) to retry rather than hang.
-              bootstrapAttempt.current = null
-              setError('Could not set up your household. Check your connection and try again.')
-              setStatus('error')
-            }
-          }
+        if (!mine.empty) {
+          setHid(mine.docs[0].id)
           return
         }
 
+        // Not a member anywhere. Look for an invitation by verified email, and ask
+        // before joining rather than joining silently.
+        if (email && emailVerified) {
+          const invited = await getDocs(
+            query(collection(db, 'households'), where('invitedEmails', 'array-contains', email), limit(1)),
+          )
+          if (cancelled) return
+          if (!invited.empty) {
+            const docSnap = invited.docs[0]
+            const name = (docSnap.data() as { name?: string }).name ?? 'a shared budget'
+            setInvite({ id: docSnap.id, name })
+            setStatus('invited')
+            return
+          }
+        }
+
+        setStatus('none')
+      } catch {
+        if (!cancelled) {
+          setError('Could not load your budget. Check your connection and try again.')
+          setStatus('error')
+        }
+      }
+    }
+    void discover()
+    return () => {
+      cancelled = true
+    }
+  }, [uid, email, emailVerified, queryClient])
+
+  // Live subscription to the adopted household.
+  useEffect(() => {
+    if (!hid || !uid) return
+    setActiveHouseholdId(hid)
+    let unsubscribe: Unsubscribe | null = null
+    unsubscribe = onSnapshot(
+      doc(db, 'households', hid),
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          setError('This budget no longer exists. Sign out and back in.')
+          setStatus('error')
+          return
+        }
         const data = snapshot.data() as Omit<Household, 'id'>
         // Merge stored settings over DEFAULTS so every numeric field is present, and
         // no projection can read undefined and produce NaN.
         setHousehold({ ...data, id: snapshot.id, settings: { ...DEFAULTS, ...(data.settings ?? {}) } })
-        const members = data.members ?? []
-
-        if (members.includes(uid)) {
+        if ((data.members ?? []).includes(uid)) {
           setError(null)
           setStatus('ready')
-          return
         }
-
-        // Not a member yet. If this email was invited, self-add exactly once; the
-        // snapshot refires as a member and the app loads. A rejected join sets denied
-        // and is not retried (the join guard prevents an infinite write loop).
-        const invited = (data.invitedEmails ?? []).map((e) => e.toLowerCase())
-        if (email && invited.includes(email)) {
-          if (joinAttempt.current === uid) return
-          joinAttempt.current = uid
-          setStatus('joining')
-          try {
-            await joinHousehold(uid)
-            if (!cancelled) queryClient.invalidateQueries()
-          } catch {
-            if (!cancelled) {
-              setError('We could not add you to the household. Ask to be re-invited by email.')
-              setStatus('denied')
-            }
-          }
-          return
-        }
-        setStatus('denied')
       },
       (err) => {
-        if (cancelled) return
         const code = (err as { code?: string }).code
-        if (code === 'permission-denied') {
-          setError('This account is not part of the household yet. Ask to be added by email in settings.')
-          setStatus('denied')
-        } else {
-          setError('Could not load your household. Check your connection.')
-          setStatus('error')
-        }
+        setError(
+          code === 'permission-denied'
+            ? 'This account no longer has access to the budget.'
+            : 'Could not load your budget. Check your connection.',
+        )
+        setStatus('error')
       },
     )
     return () => {
-      cancelled = true
-      unsubscribe()
+      unsubscribe?.()
+      setActiveHouseholdId(null)
     }
-  }, [uid, email, queryClient])
+  }, [hid, uid])
 
-  const loading = status === 'loading' || status === 'bootstrapping' || status === 'joining'
+  const acceptInvite = useCallback(async () => {
+    if (!uid || !invite) return
+    setStatus('joining')
+    try {
+      await joinHousehold(invite.id, uid)
+      // Now a member: record the first name so owner labels include this person.
+      setActiveHouseholdId(invite.id)
+      const name = firstNameOf(displayName)
+      if (name) await setMemberName(uid, name).catch(() => undefined)
+      setInvite(null)
+      setHid(invite.id)
+    } catch {
+      setError('Could not join. Ask your partner to re-invite this exact email, then try again.')
+      setStatus('invited')
+    }
+  }, [uid, invite, displayName])
+
+  const declineInvite = useCallback(() => {
+    setInvite(null)
+    setStatus('none')
+  }, [])
+
+  const create = useCallback(
+    async (setup: OnboardingSetup) => {
+      if (!uid) return
+      setStatus('creating')
+      setError(null)
+      try {
+        const newHid = await createHousehold(uid, setup)
+        queryClient.clear()
+        setHid(newHid)
+      } catch {
+        setError('Could not set up your budget. Check your connection and try again.')
+        setStatus('none')
+        throw new Error('create-failed')
+      }
+    },
+    [uid, queryClient],
+  )
+
+  const loading = status === 'loading' || status === 'creating' || status === 'joining'
   // Memoized so a parent re-render (the drawer opening, a resize) does not hand every
   // consumer a fresh context value and re-render the whole tree for nothing.
   const value = useMemo(
-    () => ({
-      household: status === 'denied' ? null : household,
-      status,
-      loading,
-      bootstrapping: status === 'bootstrapping',
-      joining: status === 'joining',
-      denied: status === 'denied',
-      error,
-    }),
-    [household, status, loading, error],
+    () => ({ household, status, loading, error, invite, acceptInvite, declineInvite, create }),
+    [household, status, loading, error, invite, acceptInvite, declineInvite, create],
   )
   return <HouseholdContext.Provider value={value}>{children}</HouseholdContext.Provider>
 }

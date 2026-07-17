@@ -70,7 +70,9 @@ export default defineConfig({
     tailwindcss(),
     preloadInterFont(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // Prompt, not autoUpdate: a new deployment installs and waits, and main.tsx surfaces
+      // an "Update" banner rather than reloading under the user (see onNeedRefresh there).
+      registerType: 'prompt',
       // We register the service worker ourselves in main.tsx so we can also check for a
       // new version when the app returns to the foreground (see registerSW there).
       // No includeAssets: globPatterns below already precaches the public assets, and
@@ -84,12 +86,18 @@ export default defineConfig({
         start_url: '/',
         scope: '/',
         display: 'standalone',
+        // Light-first by design: the pre-paint script in index.html syncs the in-page
+        // theme-color to the chosen theme the moment the app boots.
         theme_color: '#f5f5f7',
         background_color: '#f5f5f7',
+        orientation: 'portrait',
+        categories: ['finance'],
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          // A dedicated full-bleed asset: the sprout inside the safe zone on the
+          // uncropped gradient, so a circular Android mask never clips the mark.
+          { src: 'maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
       workbox: {
@@ -99,11 +107,11 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/__\//],
         cleanupOutdatedCaches: true,
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
-        // A new version activates and claims open clients immediately, so an installed
-        // home-screen app never serves a stale shell once the update has downloaded. The
-        // page then reloads to the fresh content (see the controllerchange handler in
-        // main.tsx).
-        skipWaiting: true,
+        // The new worker waits until the user taps Update in the banner; updateSW(true)
+        // then messages it to skip waiting and take control, and the page reloads to the
+        // fresh content (see onNeedRefresh in main.tsx). Do not skip waiting here, or the
+        // update would apply silently and defeat the prompt.
+        skipWaiting: false,
         clientsClaim: true,
       },
     }),

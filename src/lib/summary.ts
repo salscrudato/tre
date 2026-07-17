@@ -1,25 +1,18 @@
 // Small pure helpers for the Home glance: date windows, monthly income, and the
 // member label. Finance formulas live in lib/money.ts; these are aggregations.
 
-import type { BillOwner, CategoryType, FixedExpense, Income, MemberName } from '../types'
-
-// The three options for a bill's owner, shared by the bill editor and the owner toggle.
-export const BILL_OWNER_OPTIONS: Array<{ value: BillOwner; label: string }> = [
-  { value: 'Sal', label: 'Sal' },
-  { value: 'Lisa', label: 'Lisa' },
-  { value: 'Both', label: 'Both' },
-]
+import { SHARED_OWNER, type BillOwner, type CategoryType, type FixedExpense, type Income, type MemberName } from '../types'
 
 // Whether a bill belongs in a person's scoped view: everything in the combined view
 // (person is null), and in a person view their own bills plus anything shared (Both),
-// so a shared cost like rent shows for each of us, never for only one.
+// so a shared cost like rent shows for each person, never for only one.
 export function billMatchesOwner(owner: BillOwner, person: MemberName | null): boolean {
-  return person == null || owner === person || owner === 'Both'
+  return person == null || owner === person || owner === SHARED_OWNER
 }
 
 // A short label for a bill owner, for the owner chip on a budget row.
 export function ownerLabel(owner: BillOwner): string {
-  return owner === 'Both' ? 'Shared' : owner
+  return owner === SHARED_OWNER ? 'Shared' : owner
 }
 
 // Order the categories for the Home tap-to-log grid: the common everyday and savings
@@ -29,12 +22,6 @@ export function ownerLabel(owner: BillOwner): string {
 // the planned amount.
 export function homeCategoryOrder<T extends { type: CategoryType }>(categories: T[]): T[] {
   return [...categories.filter((c) => c.type !== 'fixed'), ...categories.filter((c) => c.type === 'fixed')]
-}
-
-// A short, plain-language name for each category behavior. The stored type value stays
-// the same ('variable'); only the label the couple sees changes.
-export function categoryTypeLabel(type: CategoryType): string {
-  return type === 'fixed' ? 'Bill' : type === 'savings' ? 'Savings' : 'Everyday'
 }
 
 // One line explaining what a behavior means, so the choice is never a guess. Used under
@@ -125,14 +112,21 @@ export function monthlyNetIncomeAt(incomes: Income[], date: Date): number {
   return incomes.reduce((sum, income) => sum + (incomeInEffect(income, date) ? incomeToMonthly(income) : 0), 0)
 }
 
-// Per-earner monthly net income in effect on a given date. Lisa reads zero before her
-// September start, then her full amount, so the per-person view is honest about today.
-// Always returns both members (zero when one has no income), so the per-person view
-// never renders a missing line. Pass today for the current split.
-export function monthlyIncomeByOwnerAt(incomes: Income[], date: Date): Record<MemberName, number> {
-  const byOwner: Record<MemberName, number> = { Sal: 0, Lisa: 0 }
+// Per-earner monthly net income in effect on a given date. An income that starts in
+// a future month reads zero until then, so the per-person view is honest about today.
+// Callers pass the household's owner labels so every member gets a line (zero when
+// they have no income yet), and an owner string on older data that is not in the
+// labels still gets counted under its own name.
+export function monthlyIncomeByOwnerAt(
+  incomes: Income[],
+  date: Date,
+  owners: string[] = [],
+): Record<MemberName, number> {
+  const byOwner: Record<MemberName, number> = {}
+  for (const owner of owners) byOwner[owner] = 0
   for (const income of incomes) {
-    if (incomeInEffect(income, date)) byOwner[income.owner] += incomeToMonthly(income)
+    if (!incomeInEffect(income, date)) continue
+    byOwner[income.owner] = (byOwner[income.owner] ?? 0) + incomeToMonthly(income)
   }
   return byOwner
 }
@@ -206,6 +200,10 @@ export function billActiveOn(bill: BillTiming, date: Date): boolean {
     const last = addToMonthKey(bill.coverageStart, bill.coverageMonths - 1)
     return month >= bill.coverageStart && month <= last
   }
+  // A paid-in-full bill with a missing or unusable window must never charge its full
+  // one-time price as a phantom monthly bill; it stays out of the totals until its
+  // coverage is fixed in the bill editor.
+  if (bill.cadence === 'paidInFull') return false
   if (!bill.endDate) return true
   const end = parseMonthKey(bill.endDate)
   if (!end) return true
@@ -263,19 +261,3 @@ function monthsBetweenKeys(from: string, to: string): number {
   return (b.year - a.year) * 12 + (b.month - a.month)
 }
 
-// The owner field is informational only (the app is shared). Best-effort label
-// from the signed-in display name, defaulting to Sal.
-export function memberFromDisplayName(displayName: string | null | undefined): MemberName {
-  return (displayName ?? '').toLowerCase().includes('lisa') ? 'Lisa' : 'Sal'
-}
-
-// Resolve the member from the signed-in user, preferring the email (most reliable)
-// and falling back to the display name. lisaalfuso@gmail.com is Lisa.
-export function memberFromUser(
-  user: { email?: string | null; displayName?: string | null } | null,
-): MemberName {
-  const email = (user?.email ?? '').toLowerCase()
-  if (email.includes('lisa')) return 'Lisa'
-  if (email.includes('sal')) return 'Sal'
-  return memberFromDisplayName(user?.displayName)
-}

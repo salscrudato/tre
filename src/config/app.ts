@@ -9,9 +9,6 @@
 
 export const APP_NAME = 'Tre'
 
-// The fixed household id. The seed creates this document and the app reads it.
-export const HOUSEHOLD_ID = 'primary'
-
 // A complete settings fallback (keys match HouseholdSettings exactly), so any
 // projection is robust if a setting is ever absent.
 export const DEFAULTS = {

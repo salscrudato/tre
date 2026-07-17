@@ -106,7 +106,7 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
         ref={panelRef}
         tabIndex={-1}
         className={cn(
-          'absolute inset-y-0 left-0 flex w-[82%] max-w-[300px] flex-col bg-surface shadow-lg outline-none',
+          'card-surface absolute inset-y-0 left-0 flex w-[82%] max-w-[300px] flex-col bg-surface shadow-lg outline-none',
           'motion-safe:transition-transform motion-safe:duration-[var(--dur-fast)] motion-safe:ease-in',
           closing ? '-translate-x-full' : 'motion-safe:animate-[drawer-in_var(--dur)_var(--ease-spring)]',
         )}

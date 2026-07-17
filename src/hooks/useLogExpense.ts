@@ -1,26 +1,24 @@
-// The one place that logs an expense, shared by the Home Quick Add and the Quick Log
-// button that floats on every other screen. Writing the transaction is optimistic
+// The one place that logs an expense, used by the Home Quick Add. Writing the
+// transaction is optimistic
 // (handled in useTransactions); a savings entry carries its credit destination on the
 // document, and the service writes the transaction and the balance bump in ONE batch,
 // so the house meter moves the instant it is logged and can never drift from the
 // ledger. Deleting or editing the entry later reverses the credit exactly.
 
-import { useAuth } from '../context/auth-context'
 import { useAccounts, primaryHouseAccountId } from './useAccounts'
+import { useOwners } from './useOwners'
 import { useTransactions } from './useTransactions'
-import { memberFromUser } from '../lib/summary'
 import type { QuickAddInput } from '../components/QuickAdd'
 import type { HouseContext } from '../lib/house'
 import type { TransactionInput } from '../services/transactions'
 import type { Transaction } from '../types'
 
 export function useLogExpense() {
-  const { user } = useAuth()
   const { accounts } = useAccounts()
   // {max: 50} matches the key Home and the log sheet already subscribe, so this adds
   // no extra Firestore read; only the shared add mutation is used here.
   const tx = useTransactions({ max: 50 })
-  const createdBy = memberFromUser(user)
+  const { currentOwner: createdBy } = useOwners()
 
   async function logExpense(input: QuickAddInput, house: HouseContext | null): Promise<Transaction> {
     // When the house savings live in flagged accounts, the contribution lands on the

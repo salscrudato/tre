@@ -16,6 +16,24 @@ export const CATEGORY_PALETTE = [
   '#147a45',
 ]
 
+// Human hue names, index-aligned with the palette, so a screen reader hears
+// "Emerald" instead of "Color 1".
+export const CATEGORY_PALETTE_NAMES = [
+  'Emerald',
+  'Teal',
+  'Indigo',
+  'Slate',
+  'Sky blue',
+  'Amber',
+  'Purple',
+  'Green',
+  'Orange',
+  'Pink',
+  'Bright green',
+  'Gray',
+  'Forest green',
+]
+
 // The readable ink color (white or near-black) for a glyph drawn on a swatch, so
 // the selected check clears contrast on light swatches like amber as well as dark.
 export function swatchInk(hex: string): string {

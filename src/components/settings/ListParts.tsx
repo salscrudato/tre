@@ -52,3 +52,18 @@ export function EmptyState({
     </div>
   )
 }
+
+// The compact header add affordance shared by the Accounts, Goals, and Income cards,
+// so every settings card adds in exactly the same way.
+export function AddButton({ onClick, label = 'Add' }: { onClick: () => void; label?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="-mr-1 inline-flex min-h-11 items-center gap-1 rounded-pill px-2 py-1.5 text-callout font-medium text-accent-strong transition hover:bg-[color-mix(in_srgb,var(--color-accent)_10%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+    >
+      <PlusIcon size={16} strokeWidth={2.25} aria-hidden="true" />
+      {label}
+    </button>
+  )
+}

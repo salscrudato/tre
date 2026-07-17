@@ -16,31 +16,32 @@ const acct = (over: Partial<Account>): Account => ({
   ...over,
 })
 
-// The real Betterment set, as corrected: House and Cash and Lisa count in full, Build
-// Wealth counts only its allocated slice, Self Directed does not count at all.
+// A generic set exercising every counting rule: two accounts count in full, one
+// counts only its allocated slice, one is not flagged at all. The flagged amounts
+// sum exactly to a 100,000 goal: 10,000 + 50,000 + 5,000 + 35,000.
 const accounts: Account[] = [
-  acct({ id: 'acct_cash', name: 'Joint Cash Reserve', type: 'cash', balance: 16000, countsTowardHouse: true }),
-  acct({ id: 'acct_house', name: 'House (Betterment)', type: 'taxable', balance: 132449.28, countsTowardHouse: true }),
-  acct({ id: 'acct_lisa', name: "Lisa's Savings", type: 'cash', balance: 6000, countsTowardHouse: true }),
+  acct({ id: 'acct_cash', name: 'Cash reserve', type: 'cash', balance: 10000, countsTowardHouse: true }),
+  acct({ id: 'acct_house', name: 'House fund', type: 'taxable', balance: 50000, countsTowardHouse: true }),
+  acct({ id: 'acct_partner', name: 'Partner savings', type: 'cash', balance: 5000, countsTowardHouse: true }),
   acct({
     id: 'acct_build',
-    name: 'Build Wealth (Betterment)',
+    name: 'Brokerage',
     type: 'taxable',
-    balance: 154001.73,
+    balance: 80000,
     countsTowardHouse: true,
-    houseAllocation: 95550.72,
+    houseAllocation: 35000,
   }),
-  acct({ id: 'acct_self', name: 'Self Directed Investing', type: 'taxable', balance: 11608.35, countsTowardHouse: false }),
+  acct({ id: 'acct_self', name: 'Stock picks', type: 'taxable', balance: 7500, countsTowardHouse: false }),
 ]
 
 describe('accountHouseAmount', () => {
   it('counts the full balance when flagged with no allocation', () => {
-    expect(accountHouseAmount(accounts[0])).toBe(16000)
-    expect(accountHouseAmount(accounts[1])).toBe(132449.28)
+    expect(accountHouseAmount(accounts[0])).toBe(10000)
+    expect(accountHouseAmount(accounts[1])).toBe(50000)
   })
 
   it('counts only the configured allocation when set', () => {
-    expect(accountHouseAmount(accounts[3])).toBeCloseTo(95550.72, 2)
+    expect(accountHouseAmount(accounts[3])).toBeCloseTo(35000, 2)
   })
 
   it('counts zero when not flagged', () => {
@@ -53,24 +54,24 @@ describe('accountHouseAmount', () => {
 })
 
 describe('houseSavingsFromAccounts', () => {
-  it('sums the corrected set to exactly the 250,000 down payment goal', () => {
-    expect(houseSavingsFromAccounts(accounts)).toBeCloseTo(250000, 2)
+  it('sums the flagged set to exactly the 100,000 down payment goal', () => {
+    expect(houseSavingsFromAccounts(accounts)).toBeCloseTo(100000, 2)
   })
 
   it('splits the house money into stable cash and at-risk invested', () => {
-    // Cash 16,000 plus Lisa 6,000 is stable; House 132,449.28 plus the 95,550.72 Build
-    // Wealth slice is invested. Together they are the full 250,000.
-    expect(houseSavingsCashFromAccounts(accounts)).toBeCloseTo(22000, 2)
-    expect(houseSavingsInvestedFromAccounts(accounts)).toBeCloseTo(228000, 2)
+    // Cash 10,000 plus partner savings 5,000 is stable; the 50,000 house fund plus the
+    // 35,000 brokerage slice is invested. Together they are the full 100,000.
+    expect(houseSavingsCashFromAccounts(accounts)).toBeCloseTo(15000, 2)
+    expect(houseSavingsInvestedFromAccounts(accounts)).toBeCloseTo(85000, 2)
     expect(
       houseSavingsCashFromAccounts(accounts) + houseSavingsInvestedFromAccounts(accounts),
-    ).toBeCloseTo(250000, 2)
+    ).toBeCloseTo(100000, 2)
   })
 })
 
 describe('primaryHouseAccountId', () => {
   it('prefers a fully counted account over a partially allocated one', () => {
-    // Cash is first by our list, fully counted; it (not the allocated Build Wealth) takes a deposit.
+    // Cash is first by the list, fully counted; it (not the allocated brokerage) takes a deposit.
     expect(primaryHouseAccountId(accounts)).toBe('acct_cash')
   })
 

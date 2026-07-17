@@ -3,7 +3,7 @@ import { recentNoteSuggestions } from './trends'
 import type { Transaction } from '../types'
 
 function tx(note: string | undefined, id = note ?? 'x'): Transaction {
-  return { id, amount: 10, categoryId: 'cat_other', date: '2026-06-01', note, createdBy: 'Sal' }
+  return { id, amount: 10, categoryId: 'cat_other', date: '2026-06-01', note, createdBy: 'Alex' }
 }
 
 describe('recentNoteSuggestions', () => {
@@ -34,7 +34,7 @@ describe('recentNoteSuggestions', () => {
 
   it('skips the auto-written notes on special rows (payments, package sessions)', () => {
     const session: Transaction = { ...tx('Wax package session', 's'), kind: 'packageSession', packageId: 'p1' }
-    const payment: Transaction = { ...tx('Geico paid in full', 'g'), kind: 'billPayment', billId: 'b1' }
+    const payment: Transaction = { ...tx('Insurance paid in full', 'g'), kind: 'billPayment', billId: 'b1' }
     expect(recentNoteSuggestions([session, payment, tx('Lunch', 'l')])).toEqual(['Lunch'])
   })
 })

@@ -1,13 +1,17 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { SparkleIcon, ChevronRightIcon, ChevronDownIcon } from '../components/icons/ui'
 import { HomeIcon, HouseKeyIcon } from '../components/icons/nav'
 import { useHouseModel } from '../hooks/useHouseModel'
 import { useSettings } from '../hooks/useSettings'
+import { createHouseGoal } from '../services/goals'
 import { houseRunway } from '../lib/money'
-import { formatCurrency, formatDate } from '../lib/format'
+import { formatCurrency, formatDate, formatPercent } from '../lib/format'
 import { cn } from '../lib/cn'
 import { Card } from '../components/Card'
+import { Button } from '../components/Button'
+import { Explain } from '../components/Explain'
 import { Spinner } from '../components/Spinner'
 import { HouseGoalCard } from '../components/HouseGoalCard'
 import { HousePower } from '../components/HousePower'
@@ -21,6 +25,14 @@ export default function House() {
   const { settings, today, plan, house, horizonValid, isLoading, isError } = useHouseModel()
   const { update: updateSettings } = useSettings()
   const [showTools, setShowTools] = useState(false)
+  const qc = useQueryClient()
+  // One-tap house goal for a household that has none yet: created under the stable
+  // goal_house id from the settings target and date, so every screen agrees at once.
+  const createGoalMutation = useMutation({
+    mutationFn: (vars: { target: number; targetDate: string }) =>
+      createHouseGoal(vars.target, vars.targetDate),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+  })
 
   const discBudget = plan?.discretionaryBudgetMonthly ?? 0
 
@@ -71,14 +83,25 @@ export default function House() {
           <HomeIcon size={18} />
           <span className="text-caption font-semibold uppercase tracking-wide">House</span>
         </div>
-        <h1 className="mt-3 text-h2 text-ink">Set your house goal</h1>
+        <h1 className="mt-3 text-h2 text-ink">Saving for a house?</h1>
         <p className="mt-2 text-callout text-ink-2">
-          Add a goal named House in{' '}
-          <Link to="/settings" className="font-medium text-accent-strong hover:underline">
-            Settings
-          </Link>{' '}
-          to track the down payment and the home you can afford.
+          One tap sets up a house goal. You will see how much you have saved toward the down payment, the date your
+          saving pace reaches it, and the home price that supports. You can change the target anytime.
         </p>
+        <div className="mt-4">
+          <Button
+            onClick={() =>
+              createGoalMutation.mutate({
+                target: settings.downPaymentTarget,
+                targetDate: settings.housePurchaseTargetDate,
+              })
+            }
+            disabled={createGoalMutation.isPending}
+            aria-busy={createGoalMutation.isPending}
+          >
+            {createGoalMutation.isPending ? 'Setting up' : 'Start my house goal'}
+          </Button>
+        </div>
       </Card>
     )
   }
@@ -103,9 +126,15 @@ export default function House() {
           </div>
           <p className="mt-2 text-caption text-muted">
             At a monthly payment of{' '}
-            <span className="tnum">{formatCurrency(house.targetPiti, { cents: false })}</span> (principal, interest,
-            taxes, and insurance).
+            <span className="tnum">{formatCurrency(house.targetPiti, { cents: false })}</span> (the loan payment plus
+            property taxes and insurance).
           </p>
+          <Explain className="mt-3" label="How is this calculated?">
+            We take the down payment we are on pace to save by {formatDate(house.targetDate, 'month')}, borrow the rest
+            at <span className="tnum">{formatPercent(house.mortgageRate, { digits: 1 })}</span> over {house.termYears}{' '}
+            years, and add property tax and insurance. The price shown is the highest one that keeps the full monthly
+            payment at <span className="tnum">{formatCurrency(house.targetPiti, { cents: false })}</span>.
+          </Explain>
         </Card>
       )}
 

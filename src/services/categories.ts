@@ -1,4 +1,4 @@
-import { getDocs, orderBy, query, where, writeBatch } from 'firebase/firestore'
+import { deleteField, getDocs, orderBy, query, where, writeBatch } from 'firebase/firestore'
 import { db } from '../config/firebase'
 import type { Category } from '../types'
 import { colRef, createInCol, docRef, listCol, updateInCol } from './firestore'
@@ -23,13 +23,14 @@ export async function deleteCategoryReassigning(
   categoryId: string,
   fallbackCategoryId: string,
 ): Promise<void> {
-  const [txSnap, fixedSnap] = await Promise.all([
+  const [txSnap, fixedSnap, pkgSnap] = await Promise.all([
     getDocs(query(colRef('transactions'), where('categoryId', '==', categoryId))),
     getDocs(query(colRef('fixedExpenses'), where('categoryId', '==', categoryId))),
+    getDocs(query(colRef('packages'), where('categoryId', '==', categoryId))),
   ])
   // Firestore caps a batch at 500 operations, so reassign in chunks and delete the
   // category last: if a chunk fails midway, nothing is orphaned, the delete never ran.
-  const refs = [...txSnap.docs, ...fixedSnap.docs].map((d) => d.ref)
+  const refs = [...txSnap.docs, ...fixedSnap.docs, ...pkgSnap.docs].map((d) => d.ref)
   const CHUNK = 450
   for (let start = 0; start < refs.length; start += CHUNK) {
     const batch = writeBatch(db)
@@ -40,5 +41,7 @@ export async function deleteCategoryReassigning(
   }
   const final = writeBatch(db)
   final.delete(docRef('categories', categoryId))
+  // Drop the deleted category's budget key too, so the plan never carries a stale line.
+  final.update(docRef('budget', 'template'), { [`byCategoryId.${categoryId}`]: deleteField() })
   await final.commit()
 }

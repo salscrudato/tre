@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { buildBudgetView, savingsRateMonthly } from './budget'
+import {
+  buildBudgetView,
+  discretionaryBudget,
+  essentialBudget,
+  everydayBudget,
+  savingsRateMonthly,
+} from './budget'
 import type { Category, FixedExpense, Transaction } from '../types'
 
 const cat = (id: string, name: string, type: Category['type']): Category => ({
@@ -20,10 +26,10 @@ const categories: Category[] = [
 ]
 
 const fixed: FixedExpense[] = [
-  { id: 'fx_rent', name: 'Rent', amount: 4050, categoryId: 'cat_housing', dueDay: 1, owner: 'Sal', active: true },
-  { id: 'fx_pseg', name: 'PSEG', amount: 200, categoryId: 'cat_utilities', dueDay: 9, owner: 'Lisa', active: true },
-  { id: 'fx_paused', name: 'Old', amount: 99, categoryId: 'cat_utilities', dueDay: 5, owner: 'Lisa', active: false },
-  { id: 'fx_house1', name: 'House Savings 1', amount: 275, categoryId: 'cat_savings', dueDay: 15, owner: 'Lisa', active: true, goalId: 'goal_house' },
+  { id: 'fx_rent', name: 'Rent', amount: 4050, categoryId: 'cat_housing', dueDay: 1, owner: 'Alex', active: true },
+  { id: 'fx_electric', name: 'Electric', amount: 200, categoryId: 'cat_utilities', dueDay: 9, owner: 'Sam', active: true },
+  { id: 'fx_paused', name: 'Old', amount: 99, categoryId: 'cat_utilities', dueDay: 5, owner: 'Sam', active: false },
+  { id: 'fx_house1', name: 'House Savings 1', amount: 275, categoryId: 'cat_savings', dueDay: 15, owner: 'Sam', active: true, goalId: 'goal_house' },
 ]
 
 const byCategoryId = { cat_dining: 625, cat_groceries: 1000, cat_savings: 550 }
@@ -33,7 +39,7 @@ const tx = (id: string, amount: number, categoryId: string, date: string): Trans
   amount,
   categoryId,
   date,
-  createdBy: 'Sal',
+  createdBy: 'Alex',
 })
 
 const monthTx: Transaction[] = [
@@ -63,10 +69,10 @@ describe('buildBudgetView', () => {
   })
 
   it('committed totals sum only active bills', () => {
-    // Utilities: PSEG 200 active, Old 99 paused -> committed 200.
+    // Utilities: Electric 200 active, Old 99 paused -> committed 200.
     const utils = view.fixed.rows.find((r) => r.category.id === 'cat_utilities')
     expect(utils?.committedMonthly).toBe(200)
-    expect(utils?.bills.map((b) => b.id)).toEqual(['fx_pseg'])
+    expect(utils?.bills.map((b) => b.id)).toEqual(['fx_electric'])
     expect(view.committedFixedMonthly).toBe(4250)
     expect(view.committedSavingsMonthly).toBe(275)
   })
@@ -84,7 +90,7 @@ describe('buildBudgetView', () => {
   it('excludes a bill past its end date from committed totals and row bills', () => {
     const withEnded: FixedExpense[] = [
       ...fixed,
-      { id: 'fx_lease', name: 'Lease', amount: 350, categoryId: 'cat_housing', dueDay: 3, owner: 'Sal', active: true, endDate: '2026-05-01' },
+      { id: 'fx_lease', name: 'Lease', amount: 350, categoryId: 'cat_housing', dueDay: 3, owner: 'Alex', active: true, endDate: '2026-05-01' },
     ]
     const ended = buildBudgetView(categories, withEnded, byCategoryId, monthTx, yearTx, new Date(2026, 6, 10))
     const housing = ended.fixed.rows.find((r) => r.category.id === 'cat_housing')
@@ -97,7 +103,7 @@ describe('buildBudgetView', () => {
   it('still counts a bill whose end date is ahead', () => {
     const withFutureEnd: FixedExpense[] = [
       ...fixed,
-      { id: 'fx_lease', name: 'Lease', amount: 350, categoryId: 'cat_housing', dueDay: 3, owner: 'Sal', active: true, endDate: '2026-12-01' },
+      { id: 'fx_lease', name: 'Lease', amount: 350, categoryId: 'cat_housing', dueDay: 3, owner: 'Alex', active: true, endDate: '2026-12-01' },
     ]
     const live = buildBudgetView(categories, withFutureEnd, byCategoryId, monthTx, yearTx, new Date(2026, 6, 10))
     const housing = live.fixed.rows.find((r) => r.category.id === 'cat_housing')
@@ -121,9 +127,44 @@ describe('buildBudgetView', () => {
   })
 })
 
+describe('everyday budget split (needs versus wants)', () => {
+  it('totals the full everyday budget across all variable categories', () => {
+    // Dining 625 (want) plus Groceries 1000 (need); savings is not everyday.
+    expect(everydayBudget(categories, byCategoryId)).toBe(1625)
+  })
+
+  it('counts only essential needs as the essential budget', () => {
+    // Groceries reads as a need from its name; Dining does not.
+    expect(essentialBudget(categories, byCategoryId)).toBe(1000)
+  })
+
+  it('counts only wants as the discretionary budget', () => {
+    expect(discretionaryBudget(categories, byCategoryId)).toBe(625)
+  })
+
+  it('always reconciles: essentials plus discretionary equal the everyday budget', () => {
+    expect(essentialBudget(categories, byCategoryId) + discretionaryBudget(categories, byCategoryId)).toBe(
+      everydayBudget(categories, byCategoryId),
+    )
+  })
+
+  it('honors an explicit essential flag over the name heuristic', () => {
+    // Force Groceries to a want and Dining to a need, against their names.
+    const flipped: Category[] = categories.map((c) =>
+      c.id === 'cat_groceries'
+        ? { ...c, essential: false }
+        : c.id === 'cat_dining'
+          ? { ...c, essential: true }
+          : c,
+    )
+    expect(essentialBudget(flipped, byCategoryId)).toBe(625)
+    expect(discretionaryBudget(flipped, byCategoryId)).toBe(1000)
+  })
+})
+
 describe('savingsRateMonthly', () => {
   it('subtracts committed non-savings bills and logged non-savings spend, not savings', () => {
-    // income 10000, committed non-savings 4250 (rent 4050 + PSEG 200), logged 136.20.
+    // income 10000, committed non-savings 4250 (rent 4050 + electric 200), logged 136.20.
     const rate = savingsRateMonthly(10000, fixed, categories, monthTx)
     expect(rate).toBeCloseTo((10000 - 4250 - 136.2) / 10000, 4)
   })
@@ -163,7 +204,7 @@ describe('savingsRateMonthly', () => {
     const today = new Date(2026, 6, 10)
     const withEnded: FixedExpense[] = [
       ...fixed,
-      { id: 'fx_lease', name: 'Lease', amount: 350, categoryId: 'cat_housing', dueDay: 3, owner: 'Sal', active: true, endDate: '2026-05-01' },
+      { id: 'fx_lease', name: 'Lease', amount: 350, categoryId: 'cat_housing', dueDay: 3, owner: 'Alex', active: true, endDate: '2026-05-01' },
     ]
     expect(savingsRateMonthly(10000, withEnded, categories, monthTx, today)).toBeCloseTo(
       savingsRateMonthly(10000, fixed, categories, monthTx, today),
@@ -173,21 +214,21 @@ describe('savingsRateMonthly', () => {
 })
 
 // A paid-in-full bill: one real outflow, spread across its covered months, never
-// charged monthly on top. The Geico case: 1440 covering twelve months.
+// charged monthly on top. An annual premium: 1440 covering twelve months.
 describe('paid-in-full bills', () => {
-  const geico: FixedExpense = {
-    id: 'fx_geico',
-    name: 'Geico',
+  const premium: FixedExpense = {
+    id: 'fx_premium',
+    name: 'Car insurance',
     amount: 1440,
     categoryId: 'cat_utilities',
     dueDay: 1,
-    owner: 'Sal',
+    owner: 'Alex',
     active: true,
     cadence: 'paidInFull',
     coverageStart: '2026-01',
     coverageMonths: 12,
   }
-  const bills = [...fixed, geico]
+  const bills = [...fixed, premium]
   const inWindow = new Date(2026, 6, 10)
   const pastWindow = new Date(2027, 1, 10)
 
@@ -207,7 +248,7 @@ describe('paid-in-full bills', () => {
     const payment: Transaction = {
       ...tx('tp', 1440, 'cat_utilities', '2026-07-02'),
       kind: 'billPayment',
-      billId: 'fx_geico',
+      billId: 'fx_premium',
     }
     const view = buildBudgetView(categories, bills, byCategoryId, [...monthTx, payment], [...yearTx, payment], inWindow)
     expect(view.monthSpent).toBeCloseTo(136.2, 2)
@@ -219,7 +260,7 @@ describe('paid-in-full bills', () => {
     const payment: Transaction = {
       ...tx('tp', 1440, 'cat_utilities', '2026-07-02'),
       kind: 'billPayment',
-      billId: 'fx_geico',
+      billId: 'fx_premium',
     }
     expect(savingsRateMonthly(10000, bills, categories, [...monthTx, payment], inWindow)).toBeCloseTo(
       savingsRateMonthly(10000, bills, categories, monthTx, inWindow),
@@ -254,5 +295,33 @@ describe('prepaid package rows', () => {
     const withSessionOnly = savingsRateMonthly(10000, fixed, categories, [...monthTx, session])
     expect(withBoth).toBeCloseTo(withSessionOnly, 6)
     expect(withBoth).toBeLessThan(savingsRateMonthly(10000, fixed, categories, monthTx))
+  })
+})
+
+describe('savingsRateMonthly with a variable-category bill', () => {
+  // Streaming 20 lives inside the variable Dining? No: give Dining a bill directly so
+  // the category carries a committed 20 next to logged actuals.
+  const withVarBill: FixedExpense[] = [
+    ...fixed,
+    { id: 'fx_stream', name: 'Streaming', amount: 20, categoryId: 'cat_dining', dueDay: 3, owner: 'Alex', active: true },
+  ]
+
+  it('does not double count the bill when its actual charge is logged in the category', () => {
+    // Logged dining 52 exceeds the committed 20, so the category counts once at 52.
+    const withBill = savingsRateMonthly(10000, withVarBill, categories, monthTx)
+    const withoutBill = savingsRateMonthly(10000, fixed, categories, monthTx)
+    expect(withBill).toBeCloseTo(withoutBill, 6)
+  })
+
+  it('counts the committed bill when nothing is logged in its category yet', () => {
+    const noDiningTx = monthTx.filter((t) => t.categoryId !== 'cat_dining')
+    const rate = savingsRateMonthly(10000, withVarBill, categories, noDiningTx)
+    // committed 4250 fixed + 20 streaming + groceries 84.20 logged.
+    expect(rate).toBeCloseTo((10000 - 4250 - 20 - 84.2) / 10000, 4)
+  })
+
+  it('never returns a negative rate when spending exceeds income', () => {
+    const big = [tx('big', 20000, 'cat_dining', '2026-07-05')]
+    expect(savingsRateMonthly(10000, fixed, categories, big)).toBe(0)
   })
 })

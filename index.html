@@ -36,6 +36,9 @@
         // takes over from here.
         var meta = document.querySelector('meta[name="theme-color"]')
         if (meta) meta.setAttribute('content', theme === 'dark' ? '#000000' : '#f5f5f7')
+        // Paint the page background too, so a first uncached dark load never flashes
+        // UA white before the stylesheet arrives (mirrors --color-bg per theme).
+        document.documentElement.style.backgroundColor = theme === 'dark' ? '#000000' : '#f5f5f7'
       })()
     </script>
   </head>

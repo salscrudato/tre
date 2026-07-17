@@ -27,8 +27,9 @@ import { Button } from '../components/Button'
 import { Field } from '../components/Field'
 import { Money } from '../components/Money'
 import { Spinner } from '../components/Spinner'
+import { Link } from 'react-router-dom'
 import { TagIcon } from '../components/icons/nav'
-import { AlertIcon, CheckIcon, ExternalLinkIcon } from '../components/icons/ui'
+import { AlertIcon, CheckIcon, ChevronLeftIcon, ExternalLinkIcon } from '../components/icons/ui'
 
 // The research wait, narrated plainly. Text swap on an interval, no animation, so
 // reduced motion needs no special case.
@@ -196,6 +197,15 @@ export default function Plan() {
   return (
     <div className="flex flex-col gap-6">
       <h1 className="sr-only">Plan a purchase</h1>
+
+      <Link
+        to="/spending"
+        aria-label="Back to Spending"
+        className="inline-flex min-h-11 w-fit items-center gap-1 rounded-md text-callout text-ink-2 transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+      >
+        <ChevronLeftIcon size={18} strokeWidth={2} aria-hidden="true" />
+        Spending
+      </Link>
 
       <Card>
         <div className="flex items-center gap-2 text-accent-strong">

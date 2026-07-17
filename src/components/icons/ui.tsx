@@ -67,6 +67,26 @@ export function CalendarIcon(props: IconProps) {
   )
 }
 
+// A rising line with an arrowhead: savings and progress going up.
+export function TrendUpIcon(props: IconProps) {
+  return (
+    <Base strokeWidth={2} {...props}>
+      <path d="M4 15l5-5 4 4 7-7" />
+      <path d="M15 7h5v5" />
+    </Base>
+  )
+}
+
+// A small pencil: add or edit a short note on a logged expense.
+export function NoteIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M15.5 5.5l3 3L9 18l-3.5.5L6 15z" />
+      <path d="M14 7l3 3" />
+    </Base>
+  )
+}
+
 // A sun with rays: switch to light mode.
 export function SunIcon(props: IconProps) {
   return (

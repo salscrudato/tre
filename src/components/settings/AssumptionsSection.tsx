@@ -4,7 +4,7 @@ import { useSettings } from '../../hooks/useSettings'
 import { useGoals } from '../../hooks/useGoals'
 import { useHouseModel } from '../../hooks/useHouseModel'
 import { useToday } from '../../hooks/useToday'
-import { formatCurrency, formatDate, groupAmount, parseAmount } from '../../lib/format'
+import { clampToCents, formatCurrency, formatDate, groupAmount, parseAmount } from '../../lib/format'
 import { monthsUntil } from '../../lib/money'
 import { DEFAULTS } from '../../config/app'
 import { Card } from '../Card'
@@ -168,6 +168,19 @@ function AssumptionsForm({
   const hc = parseAmount(houseContribution)
   const houseContributionOk = houseContribution.trim() === '' || (Number.isFinite(hc) && hc >= 0)
 
+  // The target payment must sit inside the min/max bounds, which live in the advanced
+  // section. Reveal that section automatically when the target falls out of range, so the
+  // error never names fields the person cannot see.
+  const targetOutOfBounds =
+    Number.isFinite(pTarget) && Number.isFinite(pMin) && Number.isFinite(pMax) && (pTarget < pMin || pTarget > pMax)
+  useEffect(() => {
+    if (targetOutOfBounds) setShowAdvanced(true)
+  }, [targetOutOfBounds])
+
+  // A non-blocking sanity check on the return rate, so a mistyped 0.07 (which saves as
+  // 0.0007 and quietly flattens every projection) gets a gentle double-check prompt.
+  const returnRateOdd = annualReturn.trim() !== '' && Number.isFinite(ar) && (ar < 0.01 || ar > 0.15)
+
   const rateOk = (v: number) => Number.isFinite(v) && v >= 0 && v <= 1
   const valid =
     houseContributionOk &&
@@ -201,17 +214,17 @@ function AssumptionsForm({
         mortgageRateAssumption: mr,
         propertyTaxRateAssumption: pt,
         downPaymentReturnAssumption: dr,
-        annualHomeInsuranceAssumption: Math.round(ins * 100) / 100,
+        annualHomeInsuranceAssumption: clampToCents(ins),
         loanTermYears: tm,
-        targetPiti: Math.round(pTarget * 100) / 100,
-        targetPitiMin: Math.round(pMin * 100) / 100,
-        targetPitiMax: Math.round(pMax * 100) / 100,
-        downPaymentTarget: Math.round(dp * 100) / 100,
+        targetPiti: clampToCents(pTarget),
+        targetPitiMin: clampToCents(pMin),
+        targetPitiMax: clampToCents(pMax),
+        downPaymentTarget: clampToCents(dp),
         // Optional: when off, undefined removes the field so the dashboard hides the
         // target home price marker. The plan is the down payment goal, not a price.
-        targetHomePrice: showTargetHome ? Math.round(homePrice * 100) / 100 : undefined,
+        targetHomePrice: showTargetHome ? clampToCents(homePrice) : undefined,
         // Optional: blank uses the computed monthly surplus as the house contribution.
-        houseContributionMonthly: houseContribution.trim() === '' ? undefined : Math.round(hc * 100) / 100,
+        houseContributionMonthly: houseContribution.trim() === '' ? undefined : clampToCents(hc),
         housePurchaseTargetDate: targetDate,
       })
     } catch {
@@ -223,17 +236,24 @@ function AssumptionsForm({
 
   return (
     <div className="flex flex-col gap-4">
-      <Field
-        label="Assumed annual return (percent)"
-        inputMode="decimal"
-        numeric
-        value={annualReturn}
-        onChange={(e) => {
-          setAnnualReturn(onlyNumber(e.target.value))
-          onDirty()
-        }}
-        hint="Drives the invest-instead projections."
-      />
+      <div className="flex flex-col gap-1.5">
+        <Field
+          label="Assumed annual return (percent)"
+          inputMode="decimal"
+          numeric
+          value={annualReturn}
+          onChange={(e) => {
+            setAnnualReturn(onlyNumber(e.target.value))
+            onDirty()
+          }}
+          hint="Drives the invest-instead projections. Enter 7 for 7% a year, about the long-run stock market average."
+        />
+        {returnRateOdd && (
+          <p className="text-caption text-muted">
+            Unusually {ar < 0.01 ? 'low' : 'high'} for an annual return, double check this number.
+          </p>
+        )}
+      </div>
       <Field
         label="Target monthly home payment"
         inputMode="decimal"
@@ -243,11 +263,7 @@ function AssumptionsForm({
           setTargetPiti(groupAmount(e.target.value))
           onDirty()
         }}
-        error={
-          Number.isFinite(pTarget) && Number.isFinite(pMin) && Number.isFinite(pMax) && (pTarget < pMin || pTarget > pMax)
-            ? 'Keep the payment between the minimum and maximum.'
-            : undefined
-        }
+        error={targetOutOfBounds ? 'Keep this between the minimum and maximum monthly payments below.' : undefined}
         hint={
           Number.isFinite(pTarget) && pTarget > 0 ? (
             <>
@@ -355,6 +371,7 @@ function AssumptionsForm({
         <div id="advanced-assumptions" className="flex flex-col gap-4">
           <Field
             label="Mortgage rate (percent)"
+            hint="The yearly interest rate you expect on the home loan."
             inputMode="decimal"
             numeric
             value={mortgageRate}
@@ -365,6 +382,7 @@ function AssumptionsForm({
           />
           <Field
             label="Property tax rate (percent)"
+            hint="Yearly property tax as a share of the home price. Around 1 to 2 in most towns."
             inputMode="decimal"
             numeric
             value={propertyTax}
@@ -382,7 +400,7 @@ function AssumptionsForm({
               setDownReturn(onlyNumber(e.target.value))
               onDirty()
             }}
-            hint="The de-risked return on savings set aside for the down payment."
+            hint="The return on the safer, steadier savings set aside for the down payment."
           />
           <Field
             label="Home insurance per year"

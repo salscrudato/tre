@@ -10,7 +10,13 @@ export function Toaster() {
   useEffect(() => subscribeToasts(setToasts), [])
 
   return createPortal(
-    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+20px)] z-[60] flex flex-col items-center gap-2 px-4">
+    // The polite live region is always mounted, so a toast injected later is
+    // announced; role on the item itself would mount with its text and be missed.
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+20px)] z-[60] flex flex-col items-center gap-2 px-4"
+    >
       {toasts.map((toast) => (
         <ToastItem key={toast.id} toast={toast} />
       ))}
@@ -28,7 +34,7 @@ function ToastItem({ toast }: { toast: Toast }) {
   const Icon = toast.tone === 'error' ? AlertIcon : CheckIcon
   return (
     <div
-      role={toast.tone === 'error' ? 'alert' : 'status'}
+      role={toast.tone === 'error' ? 'alert' : undefined}
       className="pointer-events-auto flex max-w-[420px] items-center gap-2 rounded-pill border border-line bg-surface px-4 py-2.5 text-callout text-ink shadow-lg motion-safe:animate-[pop-in_var(--dur)_var(--ease-spring)]"
     >
       <Icon

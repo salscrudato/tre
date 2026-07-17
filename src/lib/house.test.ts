@@ -35,7 +35,7 @@ const bill = (overrides: Partial<FixedExpense>): FixedExpense => ({
   amount: 400,
   categoryId: 'cat_savings',
   dueDay: 15,
-  owner: 'Lisa',
+  owner: 'Sam',
   active: true,
   ...overrides,
 })
@@ -80,14 +80,14 @@ describe('houseContext', () => {
 
   it('derives house savings from flagged accounts and reports the mix', () => {
     const ctx = houseContext(settings, [houseGoal], [], today, [
-      account({ id: 'a1', type: 'cash', balance: 16000, countsTowardHouse: true }),
-      account({ id: 'a2', type: 'taxable', balance: 132449.28, countsTowardHouse: true }),
+      account({ id: 'a1', type: 'cash', balance: 10000, countsTowardHouse: true }),
+      account({ id: 'a2', type: 'taxable', balance: 42500.25, countsTowardHouse: true }),
       account({ id: 'a3', type: 'taxable', balance: 50000 }),
     ])
     expect(ctx?.fromAccounts).toBe(true)
-    expect(ctx?.houseSavings).toBeCloseTo(148449.28, 2)
-    expect(ctx?.houseSavingsCash).toBe(16000)
-    expect(ctx?.houseSavingsInvested).toBeCloseTo(132449.28, 2)
+    expect(ctx?.houseSavings).toBeCloseTo(52500.25, 2)
+    expect(ctx?.houseSavingsCash).toBe(10000)
+    expect(ctx?.houseSavingsInvested).toBeCloseTo(42500.25, 2)
   })
 
   it('falls back to the goal balance only when no account is flagged', () => {
@@ -140,5 +140,14 @@ describe('houseContext', () => {
     expect(
       houseContext(settings, [houseGoal], bills, today, [], Number.NaN)?.baselineMonthlyContribution,
     ).toBe(800)
+  })
+})
+
+describe('findHouseGoal name fallback', () => {
+  it('matches only the whole word house, never a coincidental substring', () => {
+    const warehouse: Goal = { ...houseGoal, id: 'goal_w', name: 'Warehouse loft fund' }
+    expect(findHouseGoal([warehouse])).toBeNull()
+    const spaced: Goal = { ...houseGoal, id: 'goal_h', name: 'New house fund' }
+    expect(findHouseGoal([spaced])?.id).toBe('goal_h')
   })
 })

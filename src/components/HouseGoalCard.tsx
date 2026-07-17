@@ -202,7 +202,7 @@ export function HouseGoalCard({ house, today, unallocatedMonthly = 0 }: HouseGoa
               </span>{' '}
               more per month.
               {extra >= calc.extraNeeded - 0.5 && extra > 0.5 && (
-                <> Our unclaimed surplus already covers that; it just has to move.</>
+                <> The money left over each month already covers that; it just has to move.</>
               )}
             </p>
           ) : null}
@@ -211,7 +211,7 @@ export function HouseGoalCard({ house, today, unallocatedMonthly = 0 }: HouseGoa
           {extra > 0.5 && (calc.onPace || !Number.isFinite(calc.extraNeeded)) && (
             <p className="mt-1 text-callout text-ink-2">
               About <span className="tnum font-semibold text-accent-strong">{formatCurrency(extra, { cents: false })}</span>{' '}
-              of surplus is still unclaimed each month.
+              is still left over each month after bills, budgets, and the house transfers.
               {calc.sweptDate ? (
                 <>
                   {' '}
@@ -237,10 +237,10 @@ export function HouseGoalCard({ house, today, unallocatedMonthly = 0 }: HouseGoa
         This is our house down payment so far: the combined balance of the accounts we count toward the house. The
         goal is <span className="tnum">{formatCurrency(target, { cents: false })}</span>. The pace counts only our
         automatic monthly transfers (House Savings), so it is a floor we can trust: any extra we sweep in moves the
-        date up, never the other way. We count our cash toward the house now and will rebuild a cash buffer after we
+        date up, never the other way. We count our cash toward the house now, and after we buy we will rebuild a cash cushion for emergencies
         buy. The bucket is assumed to grow at{' '}
-        <span className="tnum">{Math.round(downReturn * 1000) / 10}</span> percent a year, kept de-risked for the
-        purchase.
+        <span className="tnum">{Math.round(downReturn * 1000) / 10}</span> percent a year, kept in safer, steadier
+        savings so the money is there when we buy.
       </Explain>
     </div>
   )

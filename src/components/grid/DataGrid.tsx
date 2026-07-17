@@ -524,23 +524,21 @@ function DeleteCell({ label, onDelete }: { label: string; onDelete: () => void }
     return () => window.clearTimeout(id)
   }, [armed])
 
-  return armed ? (
+  // One persistent button whose label and look swap when armed, so keyboard focus
+  // survives the state change and the swap is announced by the live region.
+  return (
     <button
       type="button"
-      onClick={onDelete}
-      aria-label={`Confirm remove ${label}`}
-      className="rounded-md px-2 py-1 text-caption font-semibold text-danger transition hover:bg-danger/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+      onClick={() => (armed ? onDelete() : setArmed(true))}
+      aria-label={armed ? `Confirm remove ${label}` : `Remove ${label}`}
+      aria-live="polite"
+      className={
+        armed
+          ? 'rounded-md px-2 py-1 text-caption font-semibold text-danger transition hover:bg-danger/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent'
+          : 'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition hover:bg-surface-2 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent'
+      }
     >
-      Remove
-    </button>
-  ) : (
-    <button
-      type="button"
-      onClick={() => setArmed(true)}
-      aria-label={`Remove ${label}`}
-      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition hover:bg-surface-2 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
-    >
-      <CloseIcon size={15} aria-hidden="true" />
+      {armed ? 'Remove' : <CloseIcon size={15} aria-hidden="true" />}
     </button>
   )
 }

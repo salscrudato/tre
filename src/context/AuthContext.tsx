@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   getRedirectResult,
   onAuthStateChanged,
@@ -8,6 +8,8 @@ import {
   type User,
 } from 'firebase/auth'
 import { auth, googleProvider } from '../config/firebase'
+import { queryClient } from '../lib/queryClient'
+import { showToast } from '../lib/toast'
 import { AuthContext } from './auth-context'
 
 function errorCode(err: unknown): string {
@@ -17,18 +19,21 @@ function errorCode(err: unknown): string {
 }
 
 // Popup failures that should fall back to a full-page redirect rather than be
-// treated as a real error. A COOP-isolated popup (the localhost symptom) reports
-// itself as closed or cancelled even though the user did nothing, so those codes
-// trigger the redirect too: the redirect path always completes sign-in.
+// treated as a real error: the environment genuinely cannot run a popup. A popup
+// the user closed on purpose is handled separately (a silent reset, not a
+// redirect), so backing out of the Google chooser never yanks the whole page away.
 function shouldRedirect(err: unknown): boolean {
   const code = errorCode(err)
   return (
     code === 'auth/popup-blocked' ||
-    code === 'auth/popup-closed-by-user' ||
-    code === 'auth/cancelled-popup-request' ||
     code === 'auth/web-storage-unsupported' ||
     code === 'auth/operation-not-supported-in-this-environment'
   )
+}
+
+function userClosedPopup(err: unknown): boolean {
+  const code = errorCode(err)
+  return code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request'
 }
 
 function authErrorMessage(err: unknown): string {
@@ -36,9 +41,10 @@ function authErrorMessage(err: unknown): string {
     case 'auth/network-request-failed':
       return 'Network problem. Check your connection and try again.'
     case 'auth/unauthorized-domain':
-      return 'This domain is not authorized for sign in. Add it in Firebase Auth settings.'
     case 'auth/operation-not-allowed':
-      return 'Google sign in is not enabled for this project yet.'
+      // Developer-configuration problems, phrased for the person seeing them.
+      console.warn('Auth configuration error', errorCode(err))
+      return 'Sign in is not set up for this app yet. Try again later.'
     default:
       return 'Sign in did not complete. Try again.'
   }
@@ -46,18 +52,34 @@ function authErrorMessage(err: unknown): string {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [authResolved, setAuthResolved] = useState(false)
+  // Returning from a redirect sign-in, onAuthStateChanged fires null first; holding
+  // loading until getRedirectResult settles stops a flash of the idle sign-in button.
+  const [redirectResolved, setRedirectResolved] = useState(false)
   const [signingIn, setSigningIn] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (next) => {
       setUser(next)
-      setLoading(false)
+      setAuthResolved(true)
     })
     // Complete any redirect-based sign-in and surface its errors.
-    getRedirectResult(auth).catch((err) => setError(authErrorMessage(err)))
+    getRedirectResult(auth)
+      .catch((err) => setError(authErrorMessage(err)))
+      .finally(() => setRedirectResolved(true))
     return unsubscribe
+  }, [])
+
+  // iOS restores the page from the back-forward cache when the user backs out of the
+  // Google page mid-redirect, reviving React state as it was: signingIn stuck true.
+  // A bfcache restore resets it so the button is tappable again.
+  useEffect(() => {
+    function onPageShow(event: PageTransitionEvent) {
+      if (event.persisted) setSigningIn(false)
+    }
+    window.addEventListener('pageshow', onPageShow)
+    return () => window.removeEventListener('pageshow', onPageShow)
   }, [])
 
   const signInWithGoogle = useCallback(async () => {
@@ -67,10 +89,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await signInWithPopup(auth, googleProvider)
       setSigningIn(false)
     } catch (err) {
+      if (userClosedPopup(err)) {
+        // The user backed out on purpose: reset quietly, no error, no redirect.
+        setSigningIn(false)
+        return
+      }
       if (shouldRedirect(err)) {
-        // Fall back to a full-page redirect: the popup was blocked or isolated by
-        // COOP. The page navigates away, so keep the signing-in state until return,
-        // where getRedirectResult and onAuthStateChanged complete the sign-in.
+        // Fall back to a full-page redirect: the environment blocked the popup. The
+        // page navigates away, so keep the signing-in state until return, where
+        // getRedirectResult and onAuthStateChanged complete the sign-in.
         try {
           await signInWithRedirect(auth, googleProvider)
           return
@@ -85,22 +112,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signOut = useCallback(async () => {
-    // Callers fire-and-forget this, so catch here: a failed sign-out should say so
-    // rather than reject unhandled with no feedback.
+    // Callers fire-and-forget this, so surface failure where the user is (a toast;
+    // the Login error line is not visible from Settings). On success, drop every
+    // cached query so the next account never sees this session's data.
     try {
       await firebaseSignOut(auth)
+      queryClient.clear()
     } catch {
-      setError('Could not sign out. Check your connection and try again.')
+      showToast('Could not sign out. Check your connection and try again.')
     }
   }, [])
 
   const clearError = useCallback(() => setError(null), [])
 
-  return (
-    <AuthContext.Provider
-      value={{ user, loading, signingIn, error, signInWithGoogle, signOut, clearError }}
-    >
-      {children}
-    </AuthContext.Provider>
+  const loading = !authResolved || !redirectResolved
+  // Memoized so a parent re-render never hands every consumer a fresh context value.
+  const value = useMemo(
+    () => ({ user, loading, signingIn, error, signInWithGoogle, signOut, clearError }),
+    [user, loading, signingIn, error, signInWithGoogle, signOut, clearError],
   )
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

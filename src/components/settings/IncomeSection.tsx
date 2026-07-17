@@ -1,19 +1,19 @@
 import { useState } from 'react'
-import { PlusIcon } from '../icons/nav'
-import { useAuth } from '../../context/auth-context'
+import { AddButton } from './ListParts'
 import { useIncomes } from '../../hooks/useIncomes'
+import { useOwners } from '../../hooks/useOwners'
 import { useToday } from '../../hooks/useToday'
 import {
   incomeInEffect,
-  memberFromUser,
   monthlyIncomeByOwnerAt,
   monthlyNetIncome,
   monthlyNetIncomeAt,
   nextIncomeStart,
 } from '../../lib/summary'
-import { formatCurrency, formatDate, groupAmount, parseAmount, titleCase } from '../../lib/format'
+import { clampToCents, formatCurrency, formatDate, groupAmount, parseAmount, titleCase } from '../../lib/format'
 import { Card } from '../Card'
 import { Button } from '../Button'
+import { ConfirmDeleteButton } from '../ConfirmDeleteButton'
 import { Field } from '../Field'
 import { Sheet } from '../Sheet'
 import { Segmented } from '../Segmented'
@@ -26,8 +26,8 @@ type SheetState = { mode: 'add' } | { mode: 'edit'; income: Income } | null
 // Short single-word labels for the pill control, so the three options fit a phone screen
 // without overflow. The longer FREQUENCY_LABEL prose below is what sentences read from.
 const FREQUENCY_OPTIONS: Array<{ value: IncomeFrequency; label: string }> = [
-  { value: 'semimonthly', label: 'Semimonthly' },
-  { value: 'biweekly', label: 'Biweekly' },
+  { value: 'semimonthly', label: 'Twice a month' },
+  { value: 'biweekly', label: 'Every 2 weeks' },
   { value: 'monthly', label: 'Monthly' },
 ]
 
@@ -37,9 +37,17 @@ const FREQUENCY_LABEL: Record<IncomeFrequency, string> = {
   monthly: 'monthly',
 }
 
+// A plain-language hint shown right at the picker, since most people cannot tell
+// semimonthly from biweekly and the choice quietly changes the monthly total.
+const FREQUENCY_HINT: Record<IncomeFrequency, string> = {
+  semimonthly: 'Paid twice a month on set days, 24 checks a year.',
+  biweekly: 'Paid every 2 weeks, 26 checks a year.',
+  monthly: 'Paid once a month.',
+}
+
 export function IncomeSection({ hideSummary = false, title = 'Income' }: { hideSummary?: boolean; title?: string } = {}) {
-  const { user } = useAuth()
   const { incomes, isLoading, isError, create, update, remove } = useIncomes()
+  const { owners, currentOwner } = useOwners()
   const today = useToday()
   const [sheet, setSheet] = useState<SheetState>(null)
 
@@ -86,14 +94,15 @@ export function IncomeSection({ hideSummary = false, title = 'Income' }: { hideS
       )}
 
       {!hideSummary && !isLoading && !isError && incomes.length > 0 && (
-        <IncomeSummary incomes={incomes} today={today} />
+        <IncomeSummary incomes={incomes} today={today} owners={owners} />
       )}
 
       {sheet && (
         <IncomeSheet
           key={sheet.mode === 'edit' ? sheet.income.id : 'add'}
           income={sheet.mode === 'edit' ? sheet.income : undefined}
-          defaultOwner={memberFromUser(user)}
+          owners={owners}
+          defaultOwner={currentOwner}
           onClose={() => setSheet(null)}
           onSubmit={(data) => {
             if (sheet.mode === 'edit') update.mutate({ id: sheet.income.id, patch: data })
@@ -118,8 +127,8 @@ export function IncomeSection({ hideSummary = false, title = 'Income' }: { hideS
 // household: the combined total leads, each person's share sits beneath it. Income in
 // effect now (an income with a future start month is excluded), with the ramped
 // total noted below when a step exists.
-function IncomeSummary({ incomes, today }: { incomes: Income[]; today: Date }) {
-  const byOwner = monthlyIncomeByOwnerAt(incomes, today)
+function IncomeSummary({ incomes, today, owners }: { incomes: Income[]; today: Date; owners: string[] }) {
+  const byOwner = monthlyIncomeByOwnerAt(incomes, today, owners)
   const combined = monthlyNetIncomeAt(incomes, today)
   const ramped = monthlyNetIncome(incomes)
   const step = nextIncomeStart(incomes, today)
@@ -129,14 +138,12 @@ function IncomeSummary({ incomes, today }: { incomes: Income[]; today: Date }) {
         <span className="text-callout font-medium text-ink">Combined, each month</span>
         <Money amount={combined} tone="positive" cents={false} />
       </div>
-      <div className="flex items-center justify-between gap-3 text-caption text-muted">
-        <span>Sal</span>
-        <Money amount={byOwner.Sal} size="sm" tone="muted" cents={false} />
-      </div>
-      <div className="flex items-center justify-between gap-3 text-caption text-muted">
-        <span>Lisa</span>
-        <Money amount={byOwner.Lisa} size="sm" tone="muted" cents={false} />
-      </div>
+      {Object.entries(byOwner).map(([owner, amount]) => (
+        <div key={owner} className="flex items-center justify-between gap-3 text-caption text-muted">
+          <span>{owner}</span>
+          <Money amount={amount} size="sm" tone="muted" cents={false} />
+        </div>
+      ))}
       {step && ramped > combined && (
         <p className="text-caption text-muted">
           From {formatDate(step, 'month')}, both incomes apply:{' '}
@@ -147,18 +154,6 @@ function IncomeSummary({ incomes, today }: { incomes: Income[]; today: Date }) {
   )
 }
 
-function AddButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="-mr-1 inline-flex min-h-11 items-center gap-1 rounded-pill px-2 py-1.5 text-callout font-medium text-accent-strong transition hover:bg-[color-mix(in_srgb,var(--color-accent)_10%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-    >
-      <PlusIcon size={16} strokeWidth={2.25} aria-hidden="true" />
-      Add
-    </button>
-  )
-}
 
 type IncomeFormData = Omit<Income, 'id' | 'startMonth'> & { startMonth: string | null }
 
@@ -178,12 +173,14 @@ function parsePayDays(raw: string): number[] {
 
 function IncomeSheet({
   income,
+  owners,
   defaultOwner,
   onClose,
   onSubmit,
   onDelete,
 }: {
   income?: Income
+  owners: string[]
   defaultOwner: MemberName
   onClose: () => void
   onSubmit: (data: IncomeFormData) => void
@@ -210,11 +207,7 @@ function IncomeSheet({
       title={income ? 'Edit income' : 'Add income'}
       footer={
         <div className="flex gap-3">
-          {onDelete && (
-            <Button variant="destructive" onClick={onDelete}>
-              Delete
-            </Button>
-          )}
+          {onDelete && <ConfirmDeleteButton onConfirm={onDelete} />}
           <Button
             fullWidth
             disabled={!canSave}
@@ -222,7 +215,7 @@ function IncomeSheet({
               onSubmit({
                 name: titleCase(name),
                 owner,
-                netPerPaycheck: Math.round(amountValue * 100) / 100,
+                netPerPaycheck: clampToCents(amountValue),
                 frequency,
                 payDays: days,
                 // A month input gives "YYYY-MM"; store the first of that month. Blank
@@ -238,29 +231,30 @@ function IncomeSheet({
     >
       <div className="flex flex-col gap-4">
         <Field label="Name" placeholder="Employer" autoCapitalize="words" autoFocus={!income} value={name} onChange={(e) => setName(e.target.value)} />
-        <div className="flex flex-col gap-1.5">
-          <span className="text-caption text-ink-2">Earner</span>
-          <Segmented
-            value={owner}
-            onChange={setOwner}
-            ariaLabel="Earner"
-            options={[
-              { value: 'Sal', label: 'Sal' },
-              { value: 'Lisa', label: 'Lisa' },
-            ]}
-          />
-        </div>
+        {owners.length > 1 && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-caption text-ink-2">Earner</span>
+            <Segmented
+              value={owner}
+              onChange={setOwner}
+              ariaLabel="Earner"
+              options={owners.map((name) => ({ value: name, label: name }))}
+            />
+          </div>
+        )}
         <Field
-          label="Net per paycheck"
+          label="Take-home per paycheck"
           inputMode="decimal"
           numeric
           placeholder="0.00"
           value={amount}
           onChange={(e) => setAmount(groupAmount(e.target.value))}
+          hint="What actually lands in your account after taxes and deductions."
         />
         <div className="flex flex-col gap-1.5">
           <span className="text-caption text-ink-2">Frequency</span>
           <Segmented value={frequency} onChange={setFrequency} options={FREQUENCY_OPTIONS} ariaLabel="Pay frequency" />
+          <p className="text-caption text-muted">{FREQUENCY_HINT[frequency]}</p>
         </div>
         {/* Pay days apply only to a monthly or twice-a-month schedule (biweekly pay lands
             every 2 weeks, not on days of the month). Optional either way. */}

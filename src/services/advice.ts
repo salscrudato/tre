@@ -6,6 +6,7 @@
 
 import { httpsCallable } from 'firebase/functions'
 import { functions } from '../config/firebase'
+import { requireHouseholdId } from './firestore'
 
 export type BillLever = 'housing' | 'necessity' | 'discretionary' | 'savings'
 export type BudgetType = 'fixed' | 'variable' | 'savings'
@@ -80,7 +81,7 @@ const KINDS: readonly AdviceActionKind[] = [
 
 // The function runs up to 120 seconds server-side; the SDK default callable timeout
 // is 70 seconds, so give the call a comfortable margin.
-const callGetAdvice = httpsCallable<{ snapshot: AdviceSnapshot; question?: string }, AdviceResult>(
+const callGetAdvice = httpsCallable<{ snapshot: AdviceSnapshot; question?: string; householdId: string }, AdviceResult>(
   functions,
   'getAdvice',
   { timeout: 150_000 },
@@ -106,7 +107,7 @@ function normalizeResult(data: unknown): AdviceResult {
 }
 
 export async function fetchAdvice(snapshot: AdviceSnapshot, question?: string): Promise<AdviceResult> {
-  const result = await callGetAdvice({ snapshot, ...(question ? { question } : {}) })
+  const result = await callGetAdvice({ snapshot, householdId: requireHouseholdId(), ...(question ? { question } : {}) })
   return normalizeResult(result.data)
 }
 
@@ -251,8 +252,8 @@ export function parseArchivedAdvice(text: string, snapshot: unknown): ParsedArch
     if (typeof entry !== 'object' || entry === null) continue
     const a = entry as Record<string, unknown>
     if (typeof a.title !== 'string' || typeof a.detail !== 'string') continue
-    const text = `${a.title} ${a.detail}`.toLowerCase()
-    if (PROTECTED_RE.test(text) && CUT_RE.test(text)) continue
+    const haystack = `${a.title} ${a.detail}`.toLowerCase()
+    if (PROTECTED_RE.test(haystack) && CUT_RE.test(haystack)) continue
     const current = finiteOrNull(a.currentMonthly) ?? finiteOrNull(a.estMonthly) ?? 0
     const proposed = finiteOrNull(a.proposedMonthly) ?? 0
     const saving = Math.max(0, current - proposed)

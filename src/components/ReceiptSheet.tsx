@@ -6,6 +6,7 @@ import { Money } from './Money'
 import { ScanIcon } from './icons/Scan'
 import { extractExpenses, type CaptureItem, type CaptureSuccess } from '../services/capture'
 import { formatCurrency, formatDate, titleCase } from '../lib/format'
+import { resolveCategoryId } from '../lib/categoryMatch'
 import { imageFileToBase64 } from '../lib/image'
 import { homeCategoryOrder, todayISO } from '../lib/summary'
 import type { QuickAddInput } from './QuickAdd'
@@ -106,14 +107,11 @@ export function ReceiptSheet({
     [],
   )
 
+  // Resolve the model's category label to a real loggable category, resilient to close
+  // variants (Grocery, Toiletries) so a correct item never silently lands in Other. The
+  // user can still change any category in the review list before logging.
   function categoryIdFor(name: string): string {
-    const lower = name.trim().toLowerCase()
-    return (
-      loggable.find((c) => c.name.toLowerCase() === lower)?.id ??
-      loggable.find((c) => c.name.toLowerCase() === 'other')?.id ??
-      loggable[0]?.id ??
-      ''
-    )
+    return resolveCategoryId(name, loggable)
   }
 
   async function handleFile(file: File) {
@@ -267,7 +265,7 @@ export function ReceiptSheet({
       {phase === 'review' && capture && (
         <div className="flex flex-col gap-4">
           {loggedCount != null ? (
-            <p className="flex items-center justify-center gap-1.5 py-4 text-callout text-positive-strong">
+            <p role="status" className="flex items-center justify-center gap-1.5 py-4 text-callout text-positive-strong">
               Logged {loggedCount} {loggedCount === 1 ? 'expense' : 'expenses'}. Nice.
             </p>
           ) : (

@@ -69,7 +69,7 @@ const NULLABLE_NUMBER = { anyOf: [{ type: 'number' }, { type: 'null' }] }
 // getAdvice: the household CFO. The model ranks levers; it never writes a price.
 // ---------------------------------------------------------------------------
 
-const ADVICE_SYSTEM = `You are a grounded, plain-spoken household CFO for two people, Sal and Lisa, who are saving for a house down payment. You advise them using only the snapshot in the user message.
+const ADVICE_SYSTEM = `You are a grounded, plain-spoken household CFO for a small household saving toward a house down payment. You advise them using only the snapshot in the user message.
 
 THE CARDINAL RULE: you never write a dollar amount, a price, or any number that means money. Not from memory, not as an estimate, not for an external service. The app computes and displays every number from the household's own data. If a point cannot be made without naming a price, make a different point instead.
 
@@ -84,7 +84,7 @@ Each action must be exactly one of these kinds:
 
 Never suggest cutting or reducing housing, childcare, health care, insurance coverage, or debt payments. For those, the only acceptable action is "add_alternative": a better rate for the same thing.
 
-Return 3 to 5 actions ranked by likely impact, highest first. Keep each title under ten words and each detail to one or two short sentences. Write plain sentences in active voice. No em dashes, no en dashes, no emoji, and no digits attached to money in any text field, the summary included.
+Return 3 to 5 actions ranked by likely impact, highest first. Keep each title under ten words and each detail to one or two short sentences. Write plain sentences in active voice for people who do not know finance words: never use discretionary, surplus, PITI, allocation, lever, annuity, or principal in the summary or any title or detail. Say optional spending, money left over, monthly house payment. No em dashes, no en dashes, no emoji, and no digits attached to money in any text field, the summary included.
 
 Return STRICT JSON in exactly this shape: {"summary": string, "actions": [{"kind": string, "billId": string | null, "categoryName": string | null, "title": string, "detail": string}]}`
 
@@ -253,15 +253,43 @@ const EXTRACT_SCHEMA: Record<string, unknown> = {
   },
 }
 
+// Short, concrete examples of what belongs in each standard category, so the model has real
+// signal to categorize by (not just a bare name) and keeps needs like Health separate from
+// wants like Personal Care. Keyed by the normalized category name; a custom category the
+// household added shows with just its name.
+const CATEGORY_EXAMPLES: Record<string, string> = {
+  groceries: 'food, produce, pantry and household staples, snacks, drinks',
+  dining: 'restaurants, takeout, coffee shops, bars',
+  'personal care': 'toiletries, cosmetics, shampoo, haircuts and salon',
+  health: 'pharmacy and prescriptions, vitamins, medical and dental',
+  subscriptions: 'streaming, apps, memberships',
+  transportation: 'gas and fuel, parking, tolls, rideshare',
+  utilities: 'electric, water, internet, phone',
+  housing: 'rent, mortgage',
+  childcare: 'daycare, babysitting, diapers, formula',
+  insurance: 'insurance premiums',
+  debt: 'loan and credit card payments',
+  other: 'anything that does not clearly fit another category',
+}
+
 function buildExtractInstruction(categories: string[]): string {
-  const names = categories.join(', ')
+  const catList = categories
+    .map((name) => {
+      const examples = CATEGORY_EXAMPLES[name.trim().toLowerCase()]
+      return examples ? `- ${name}: ${examples}` : `- ${name}`
+    })
+    .join('\n')
   return `You are reading ONE image for a private household expense tracker. First decide what it is: "receipt" (a printed store or restaurant receipt), "statement" (a bank or credit card statement, a transaction list, or a budget spreadsheet screenshot), or "none" (unreadable, or neither of those).
 
 Extract ONLY what is printed. Copy each amount EXACTLY as shown. Never compute, infer, or guess a number. If a printed value is blurry, cut off, or ambiguous, still include the item but set its confidence to "low" and copy your best literal reading.
 
-For a receipt: give the merchant name, the purchase date if printed (YYYY-MM-DD), the printed total if shown, the printed tax amount if shown, and every purchased line item with its printed price. Skip subtotal, total, tax, payment, cash, and change lines in the item list. Categorize EACH ITEM individually into exactly one of these category names: ${names}. A drugstore or supermarket run usually spans several categories (for example Groceries plus Personal Care plus Other). Use "Other" honestly for anything that does not clearly fit a specific category. Do not default everything to Groceries.
+Categorize EACH ITEM by what the item actually is, not by the store it came from. Use EXACTLY one of these category names, spelled exactly as shown:
+${catList}
+Match every item to the closest fitting category above. A drugstore or supermarket run usually spans several categories (for example Groceries plus Personal Care plus Health): shampoo and cosmetics are Personal Care, a prescription or vitamins are Health, food and household staples are Groceries. Only use "Other" when an item genuinely does not fit any category. Do not default everything to Groceries or everything to Other.
 
-For a statement: return one item per transaction row with its own date (YYYY-MM-DD; infer the year from the statement period only if it is printed). Skip payments toward the account, credits, refunds, interest reversals, and balance rows. Categorize each transaction by its merchant, using the same category names.
+For a receipt: give the merchant name, the purchase date if printed (YYYY-MM-DD), the printed total if shown, the printed tax amount if shown, and every purchased line item with its printed price. Skip subtotal, total, tax, payment, cash, and change lines in the item list.
+
+For a statement: return one item per transaction row with its own date (YYYY-MM-DD; infer the year from the statement period only if it is printed). Skip payments toward the account, credits, refunds, interest reversals, and balance rows. Categorize each transaction by its merchant.
 
 If the image is not readable or is not one of these documents, return kind "none" with a short human reason. Set any field you cannot read to null.`
 }
@@ -334,7 +362,7 @@ export const extractExpenses = onCall(
 // planPurchase: the smart shopper. Web search for live prices, one clear verdict.
 // ---------------------------------------------------------------------------
 
-const PLAN_SYSTEM = `You are a sharp, honest shopping researcher for Sal and Lisa, a couple saving aggressively for a house down payment. They name a product; you research it with web search and give one clear verdict, the way a knowledgeable friend who happens to know their goal would. Speed matters: they are waiting on this answer, so search only as much as the decision needs and decide.
+const PLAN_SYSTEM = `You are a sharp, honest shopping researcher for a household saving aggressively for a house down payment. They name a product; you research it with web search and give one clear verdict, the way a knowledgeable friend who happens to know their goal would. Speed matters: they are waiting on this answer, so search only as much as the decision needs and decide.
 
 Rules:
 - Use web search for CURRENT prices, staying within the search budget in the user message. Issue your searches TOGETHER in one batch (parallel tool calls), not one at a time with thinking between them: you know upfront what you need (current price, typical price, alternatives), so ask for it all at once and then decide. Every price you report must come from a search result (or from the confirmed page price the couple provides), with the retailer named. Never quote a price from memory. Prefer reputable retailers with the item actually in stock.

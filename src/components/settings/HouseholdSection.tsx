@@ -94,7 +94,7 @@ export function HouseholdSection() {
         {invite.isSuccess && !email && (
           <span className="inline-flex items-center gap-1 text-caption text-positive-strong">
             <CheckIcon size={14} strokeWidth={2.5} aria-hidden="true" />
-            Invite added. They join when they sign in.
+            Invite added. When they sign in with that email, the app asks them to join.
           </span>
         )}
         {(invite.isError || revoke.isError) && (

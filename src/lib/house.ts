@@ -35,7 +35,7 @@ export interface HouseContext extends HouseImpactInput {
 export function findHouseGoal(goals: Goal[]): Goal | null {
   return (
     goals.find((g) => g.id === 'goal_house') ??
-    goals.find((g) => g.name.toLowerCase().includes('house')) ??
+    goals.find((g) => /\bhouse\b/i.test(g.name)) ??
     null
   )
 }

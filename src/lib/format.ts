@@ -95,9 +95,28 @@ export function formatDate(
   return new Intl.DateTimeFormat('en-US', opts).format(date)
 }
 
+// A day heading for a ledger grouped by day: "Today" or "Yesterday" for the two most
+// recent days, otherwise the weekday and date ("Mon, Jul 14"), with the year added
+// when the day falls outside today's year. Grouping keys are calendar days, so the diff
+// is measured from each day's midnight, not the raw timestamp.
+export function formatDayHeading(input: string | Date, today: Date = new Date()): string {
+  const date = toDate(input)
+  if (Number.isNaN(date.getTime())) return ''
+  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const diffDays = Math.round((startOf(today) - startOf(date)) / 86_400_000)
+  if (diffDays === 0) return 'Today'
+  if (diffDays === 1) return 'Yesterday'
+  const opts: Intl.DateTimeFormatOptions =
+    date.getFullYear() === today.getFullYear()
+      ? { weekday: 'short', month: 'short', day: 'numeric' }
+      : { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }
+  return new Intl.DateTimeFormat('en-US', opts).format(date)
+}
+
 // Clamp a dollar input to two decimal places without float drift surprises.
 export function clampToCents(amount: number): number {
-  return Math.round(amount * 100) / 100
+  // Epsilon nudges classic float edges (1.005 * 100 is 100.4999...) onto the cent.
+  return Math.round((amount + Number.EPSILON) * 100) / 100
 }
 
 // Keep only digits and a single decimal point with at most two places. The single

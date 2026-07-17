@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { CheckIcon } from '../icons/ui'
-import { PlusIcon } from '../icons/nav'
+import { AddButton } from './ListParts'
 import { useGoals } from '../../hooks/useGoals'
 import { useAccounts, houseSavingsFromAccounts } from '../../hooks/useAccounts'
 import { findHouseGoal } from '../../lib/house'
 import { useSettings } from '../../hooks/useSettings'
-import { CATEGORY_PALETTE, swatchInk } from '../../config/palette'
-import { formatCurrency, formatPercent, groupAmount, parseAmount, titleCase } from '../../lib/format'
+import { CATEGORY_PALETTE, CATEGORY_PALETTE_NAMES, swatchInk } from '../../config/palette'
+import { clampToCents, formatCurrency, formatPercent, groupAmount, parseAmount, titleCase } from '../../lib/format'
 import { Card } from '../Card'
 import { Button } from '../Button'
+import { ConfirmDeleteButton } from '../ConfirmDeleteButton'
 import { Field } from '../Field'
 import { Sheet } from '../Sheet'
 import { Money } from '../Money'
@@ -117,18 +118,6 @@ export function GoalsSection() {
   )
 }
 
-function AddButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="-mr-1 inline-flex min-h-11 items-center gap-1 rounded-pill px-2 py-1.5 text-callout font-medium text-accent-strong transition hover:bg-[color-mix(in_srgb,var(--color-accent)_10%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-    >
-      <PlusIcon size={16} strokeWidth={2.25} aria-hidden="true" />
-      Add
-    </button>
-  )
-}
 
 type GoalFormData = Omit<Goal, 'id'>
 
@@ -176,19 +165,15 @@ function GoalSheet({
       title={goal ? 'Edit goal' : 'Add goal'}
       footer={
         <div className="flex gap-3">
-          {onDelete && (
-            <Button variant="destructive" onClick={onDelete}>
-              Delete
-            </Button>
-          )}
+          {onDelete && <ConfirmDeleteButton onConfirm={onDelete} />}
           <Button
             fullWidth
             disabled={!canSave}
             onClick={() =>
               onSubmit({
                 name: titleCase(name),
-                target: Math.round(targetValue * 100) / 100,
-                current: Math.round(currentValue * 100) / 100,
+                target: clampToCents(targetValue),
+                current: clampToCents(currentValue),
                 targetDate,
                 color,
                 priority: goal?.priority ?? nextPriority,
@@ -237,10 +222,10 @@ function GoalSheet({
               <button
                 key={swatch}
                 type="button"
-                aria-label={`Color ${index + 1}`}
+                aria-label={CATEGORY_PALETTE_NAMES[index] ?? `Color ${index + 1}`}
                 aria-pressed={color === swatch}
                 onClick={() => setColor(swatch)}
-                className="flex h-8 w-8 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+                className="flex h-11 w-11 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
                 style={{
                   backgroundColor: swatch,
                   boxShadow: color === swatch ? `0 0 0 2px var(--color-surface), 0 0 0 4px ${swatch}` : undefined,

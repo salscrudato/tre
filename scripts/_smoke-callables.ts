@@ -1,7 +1,10 @@
 // Post-deploy smoke test: authenticates as a real household member (custom token
-// minted with the Admin SDK, exchanged for an ID token) and calls the two deployed
-// AI callables with a realistic payload, verifying the live contracts end to end.
+// minted with the Admin SDK, exchanged for an ID token) and calls the deployed AI
+// callables with a generic payload, verifying the live contracts end to end.
 // Read-only against Firestore; the advice call spends one small model request.
+//
+// Run with the member uid in the environment (never commit a uid):
+//   SMOKE_UID=<uid> npx tsx scripts/_smoke-callables.ts
 
 import { initializeApp, applicationDefault } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -15,7 +18,7 @@ const app = initializeApp({
   serviceAccountId: 'sallisascru@appspot.gserviceaccount.com',
 })
 
-const SAL_UID = 'cjIg2XnUGtNJxjlk9aUZ2lerVhl2'
+const SMOKE_UID = process.env.SMOKE_UID
 const REGION = 'us-east1'
 
 function webApiKey(): string {
@@ -52,28 +55,30 @@ async function call(name: string, data: unknown, idToken: string): Promise<unkno
 }
 
 async function main() {
-  const idToken = await idTokenFor(SAL_UID)
+  if (!SMOKE_UID) throw new Error('Set SMOKE_UID to a household member uid.')
+  const idToken = await idTokenFor(SMOKE_UID)
   console.log('auth ok (member id token)')
 
+  // A fully generic snapshot: round numbers, no real bills or balances.
   const snapshot = {
-    incomeMonthlyNow: 12800,
-    incomeMonthlyLater: 17242,
-    incomeStepDate: '2026-09-01',
-    surplusMonthlyNow: 3244.89,
-    surplusMonthlyLater: 7686.89,
-    savingsRate: 0.35,
-    discretionaryBudgetMonthly: 1575,
+    incomeMonthlyNow: 8000,
+    incomeMonthlyLater: 9000,
+    incomeStepDate: '2027-01-01',
+    surplusMonthlyNow: 1500,
+    surplusMonthlyLater: 2500,
+    savingsRate: 0.2,
+    discretionaryBudgetMonthly: 1000,
     bills: [
-      { id: 'fx_rent', name: 'Rent', category: 'Rent', amount: 4033, lever: 'housing', alternativeAmount: null },
-      { id: 'fx_nespresso', name: 'Nespresso', category: 'Nespresso', amount: 83, lever: 'discretionary', alternativeAmount: null },
-      { id: 'fx_verizon', name: 'Verizon (internet)', category: 'Verizon Internet', amount: 65, lever: 'necessity', alternativeAmount: 50 },
+      { id: 'fx_rent', name: 'Rent', category: 'Housing', amount: 2000, lever: 'housing', alternativeAmount: null },
+      { id: 'fx_coffee', name: 'Coffee subscription', category: 'Subscriptions', amount: 40, lever: 'discretionary', alternativeAmount: null },
+      { id: 'fx_internet', name: 'Internet', category: 'Utilities', amount: 80, lever: 'necessity', alternativeAmount: 60 },
     ],
     budgets: [
-      { category: 'Groceries', type: 'variable', plannedMonthly: 700, spentThisMonth: 50, monthPace: 1081 },
-      { category: 'Dining', type: 'variable', plannedMonthly: 350, spentThisMonth: 0, monthPace: 0 },
+      { category: 'Groceries', type: 'variable', plannedMonthly: 600, spentThisMonth: 100, monthPace: 700 },
+      { category: 'Dining', type: 'variable', plannedMonthly: 300, spentThisMonth: 0, monthPace: 0 },
     ],
-    goals: [{ name: 'House Down Payment', target: 250000, current: 148449.28, targetDate: '2028-01-31' }],
-    assumptions: { annualReturn: 0.07, mortgageRate: 0.065, targetPiti: 6000, propertyTaxRate: 0.023 },
+    goals: [{ name: 'House down payment', target: 100000, current: 25000, targetDate: '2029-01-31' }],
+    assumptions: { annualReturn: 0.07, mortgageRate: 0.065, targetPiti: 4000, propertyTaxRate: 0.02 },
   }
   const advice = (await call('getAdvice', { snapshot }, idToken)) as {
     summary: string

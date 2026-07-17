@@ -1,7 +1,8 @@
-// Thin typed Firestore access layer for the single shared household. Hooks call
-// these; UI never touches the SDK directly. The household id is fixed (see
-// src/config/app.ts). The `as DocumentData` casts are the controlled SDK boundary,
-// not app-level any.
+// Thin typed Firestore access layer for the signed-in user's household. Hooks call
+// these; UI never touches the SDK directly. The active household id is resolved at
+// sign-in by HouseholdContext (a members query), then set here so every read and
+// write lands under the right household. The `as DocumentData` casts are the
+// controlled SDK boundary, not app-level any.
 
 import {
   addDoc,
@@ -18,19 +19,32 @@ import {
   type QueryDocumentSnapshot,
 } from 'firebase/firestore'
 import { db } from '../config/firebase'
-import { HOUSEHOLD_ID } from '../config/app'
 import type { BudgetTarget } from '../types'
 
+// The household every service call reads and writes. HouseholdContext sets this the
+// moment the household resolves and clears it on sign-out; hooks only run once the
+// household is ready, so a null here is a programming error worth failing loudly on.
+let activeHouseholdId: string | null = null
+
+export function setActiveHouseholdId(id: string | null) {
+  activeHouseholdId = id
+}
+
+export function requireHouseholdId(): string {
+  if (!activeHouseholdId) throw new Error('No household is active yet.')
+  return activeHouseholdId
+}
+
 export function householdRef() {
-  return doc(db, 'households', HOUSEHOLD_ID)
+  return doc(db, 'households', requireHouseholdId())
 }
 
 export function colRef(name: string) {
-  return collection(db, 'households', HOUSEHOLD_ID, name)
+  return collection(db, 'households', requireHouseholdId(), name)
 }
 
 export function docRef(name: string, id: string) {
-  return doc(db, 'households', HOUSEHOLD_ID, name, id)
+  return doc(db, 'households', requireHouseholdId(), name, id)
 }
 
 function withId<T>(snapshot: QueryDocumentSnapshot<DocumentData>): T {
@@ -69,10 +83,6 @@ export async function getBudgetTemplate(): Promise<BudgetTarget | null> {
   return snapshot.exists()
     ? { id: snapshot.id, ...(snapshot.data() as Omit<BudgetTarget, 'id'>) }
     : null
-}
-
-export async function setBudgetTemplate(byCategoryId: Record<string, number>): Promise<void> {
-  await setDoc(docRef('budget', 'template'), { byCategoryId }, { merge: true })
 }
 
 // Patch one category's budget via a dotted field path, so two quick edits to different

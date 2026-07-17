@@ -1,18 +1,20 @@
-// The reconciled household plan: one place that turns income, fixed costs, the
-// discretionary budget, and goal contributions into the numbers every screen shows,
-// so they never disagree. Nothing is double counted: a recurring bill inside a
-// discretionary category counts toward that category's budget, not on top of it, and
-// savings contributions are a use of the surplus, not a separate outflow.
+// The reconciled household plan: one place that turns income, fixed costs, the everyday
+// budget, and goal contributions into the numbers every screen shows, so they never
+// disagree. The everyday budget carries an honest split (essential needs versus truly
+// discretionary wants) for display, but the surplus always subtracts the full everyday
+// budget, so the money reconciles. Nothing is double counted: a recurring bill inside a
+// variable category counts toward that category's budget, not on top of it, and savings
+// contributions are a use of the surplus, not a separate outflow.
 //
-// The house pace is driven by our FIXED savings: the named automatic transfer bills
-// that fund the house goal (House Savings - Sal, House Savings - Lisa). That is the
-// committed, attainable plan. The surplus beyond those transfers is real money too,
-// but it is not committed, so the plan surfaces it separately as the amount still
-// unclaimed each month: the work left to do, never silently assumed saved.
+// The house pace is driven by the FIXED savings: the named automatic transfer bills
+// that fund the house goal. That is the committed, attainable plan. The surplus
+// beyond those transfers is real money too, but it is not committed, so the plan
+// surfaces it separately as the amount still unclaimed each month: the work left to
+// do, never silently assumed saved.
 
-import type { Category, FixedExpense, HouseholdSettings, Income, MemberName } from '../types'
+import { SHARED_OWNER, type Category, type FixedExpense, type HouseholdSettings, type Income, type MemberName } from '../types'
 import type { ContributionSchedule } from './money'
-import { discretionaryBudget } from './budget'
+import { discretionaryBudget, essentialBudget, everydayBudget } from './budget'
 import {
   billActiveOn,
   billMonthlyAmount,
@@ -40,16 +42,22 @@ export interface HouseholdPlan {
   incomeStepDate: string | null
   // Committed fixed necessities (the bills in fixed categories: housing, childcare,
   // transportation, debt, utilities, insurance). The variable-category bills
-  // (subscriptions, groceries) live inside the discretionary budget, never on top.
+  // (subscriptions, groceries) live inside the everyday budget, never on top.
   committedFixedMonthly: number
-  // The discretionary pool: the sum of the per-category budgets for variable
-  // categories. The one source of truth, edited in Settings.
+  // The full everyday budget: every variable category, needs and wants together. This is
+  // what income minus fixed minus this minus other goals leaves as the surplus.
+  everydayBudgetMonthly: number
+  // The essential slice of the everyday budget (groceries, health). A need, never called
+  // discretionary.
+  essentialBudgetMonthly: number
+  // The truly discretionary slice of the everyday budget (dining, subscriptions, other):
+  // the only figure the app labels "discretionary", so the word always means optional spend.
   discretionaryBudgetMonthly: number
   // Scheduled monthly savings into the house goal (the auto-transfer bills), and into
   // any other goal. Kept separate so the surplus never subtracts house savings twice.
   houseSavingsBillsMonthly: number
   otherGoalContributionsMonthly: number
-  // Income (now) minus fixed costs minus the discretionary budget minus other goal
+  // Income (now) minus fixed costs minus the everyday budget minus other goal
   // contributions: the real monthly amount free to build the home today. Signed, so a
   // plan that overspends reads honestly negative. The house savings bills are NOT
   // subtracted here; they are a use of this surplus, reported as the contribution.
@@ -77,9 +85,8 @@ export interface HouseholdPlan {
   // over-committed plan reads honestly negative.
   unallocatedMonthly: number
   // The house contribution attributed to each earner. When the fixed savings bills
-  // drive the pace this is each one's own named transfer (House Savings - Sal, House
-  // Savings - Lisa); otherwise it falls back to income share. The money is pooled;
-  // this is each teammate's hand on the same home.
+  // drive the pace this is each one's own named transfer; otherwise it falls back to
+  // income share. The money is pooled; this is each member's hand on the same home.
   houseContributionByMember: Record<MemberName, number>
 }
 
@@ -93,6 +100,10 @@ export interface HouseholdPlanInput {
   // The reference date for the "now" figures (defaults to today). An income that starts
   // after this date is excluded from the current income and surplus.
   today?: Date
+  // The household's owner labels, so incomeByMember and the contribution attribution
+  // carry a zero-filled entry for every member. Owners found on the data are always
+  // included even when this is absent.
+  owners?: string[]
 }
 
 export function householdPlan(input: HouseholdPlanInput): HouseholdPlan {
@@ -104,7 +115,11 @@ export function householdPlan(input: HouseholdPlanInput): HouseholdPlan {
   // in the future, incomeMonthly is the lower current figure and incomeMonthlyLater the
   // higher ramped figure, with incomeStepDate the start date.
   const incomeMonthly = monthlyNetIncomeAt(incomes, today)
-  const incomeByMember = monthlyIncomeByOwnerAt(incomes, today)
+  // Every earner keeps a line even before their income starts (it reads zero, it
+  // never disappears), so the labels merge the household's owners with every owner
+  // that appears on an income line.
+  const ownerLabels = [...new Set([...(input.owners ?? []), ...incomes.map((i) => i.owner)])]
+  const incomeByMember = monthlyIncomeByOwnerAt(incomes, today, ownerLabels)
   const incomeMonthlyLater = monthlyNetIncome(incomes)
   const stepStart = nextIncomeStart(incomes, today)
   const incomeStepDate = stepStart ? isoDate(stepStart) : null
@@ -112,10 +127,20 @@ export function householdPlan(input: HouseholdPlanInput): HouseholdPlan {
   // Only bills that are switched on and not past their end date count: an ended lease
   // or a paid-off loan must not keep dragging the surplus, the pace, or the fixed total.
   const activeBills = fixed.filter((f) => f.active && billActiveOn(f, today))
+  // A bill whose category no longer resolves (deleted elsewhere) still costs real
+  // money; count it as fixed, matching budget.ts, instead of dropping it silently.
   const committedFixedMonthly = activeBills
-    .filter((f) => typeById.get(f.categoryId) === 'fixed')
+    .filter((f) => {
+      const type = typeById.get(f.categoryId)
+      return type === 'fixed' || type == null
+    })
     .reduce((sum, f) => sum + billMonthlyAmount(f), 0)
 
+  // The full everyday budget drives the surplus; the essential and discretionary slices
+  // are for honest display (the Income allocation and the monthly plan), never a different
+  // subtraction, so the money always reconciles.
+  const everydayBudgetMonthly = everydayBudget(categories, byCategoryId)
+  const essentialBudgetMonthly = essentialBudget(categories, byCategoryId)
   const discretionaryBudgetMonthly = discretionaryBudget(categories, byCategoryId)
 
   const savingsBills = activeBills.filter((f) => typeById.get(f.categoryId) === 'savings')
@@ -130,7 +155,7 @@ export function householdPlan(input: HouseholdPlanInput): HouseholdPlan {
     .filter((f) => houseGoalId == null || f.goalId !== houseGoalId)
     .reduce((sum, f) => sum + billMonthlyAmount(f), 0)
 
-  const fixedAndOther = committedFixedMonthly + discretionaryBudgetMonthly + otherGoalContributionsMonthly
+  const fixedAndOther = committedFixedMonthly + everydayBudgetMonthly + otherGoalContributionsMonthly
   const surplusMonthly = incomeMonthly - fixedAndOther
   const surplusLater = incomeMonthlyLater - fixedAndOther
   const availableForHouseMonthly = Math.max(0, surplusMonthly)
@@ -175,29 +200,28 @@ export function householdPlan(input: HouseholdPlanInput): HouseholdPlan {
     houseContributionSource === 'surplus' ? 0 : surplusMonthly - houseContributionMonthly
 
   // Attribute the contribution: each earner's own named transfer when the bills drive
-  // the pace, else the pooled income share.
-  let houseContributionByMember: Record<MemberName, number>
+  // the pace, else the pooled income share. The member keys come from incomeByMember,
+  // which already covers the household's owner labels plus any owner on the data.
+  const members = Object.keys(incomeByMember)
+  // Each member's share of the pooled income, an equal split when no income is set.
+  const shareOf = (member: string) =>
+    incomeMonthly > 0 ? (incomeByMember[member] ?? 0) / incomeMonthly : 1 / Math.max(1, members.length)
+  const houseContributionByMember: Record<MemberName, number> = {}
+  for (const member of members) houseContributionByMember[member] = 0
   if (houseContributionSource === 'bills') {
-    houseContributionByMember = { Sal: 0, Lisa: 0 }
-    const shareSal = incomeMonthly > 0 ? incomeByMember.Sal / incomeMonthly : 0.5
     for (const bill of houseSavingsBills) {
       const amount = billMonthlyAmount(bill)
       // A shared house transfer splits by income share (the money is pooled anyway); a
       // named transfer credits its one owner. House savings bills are normally per person,
       // so the split only ever applies to an explicitly shared one.
-      if (bill.owner === 'Both') {
-        houseContributionByMember.Sal += amount * shareSal
-        houseContributionByMember.Lisa += amount * (1 - shareSal)
+      if (bill.owner === SHARED_OWNER) {
+        for (const member of members) houseContributionByMember[member] += amount * shareOf(member)
       } else {
-        houseContributionByMember[bill.owner] += amount
+        houseContributionByMember[bill.owner] = (houseContributionByMember[bill.owner] ?? 0) + amount
       }
     }
   } else {
-    const shareSal = incomeMonthly > 0 ? incomeByMember.Sal / incomeMonthly : 0.5
-    houseContributionByMember = {
-      Sal: houseContributionMonthly * shareSal,
-      Lisa: houseContributionMonthly * (1 - shareSal),
-    }
+    for (const member of members) houseContributionByMember[member] = houseContributionMonthly * shareOf(member)
   }
 
   return {
@@ -206,6 +230,8 @@ export function householdPlan(input: HouseholdPlanInput): HouseholdPlan {
     incomeMonthlyLater,
     incomeStepDate,
     committedFixedMonthly,
+    everydayBudgetMonthly,
+    essentialBudgetMonthly,
     discretionaryBudgetMonthly,
     houseSavingsBillsMonthly,
     otherGoalContributionsMonthly,

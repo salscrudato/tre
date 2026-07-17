@@ -10,7 +10,7 @@
 //     never shipped to the client and never written to a file in the repo.
 //   - Only synced balances (not secrets) are written back to the household's accounts,
 //     which members may read. Manual accounts (no plaidAccountId) are never overwritten,
-//     so Lisa's savings entered by hand always stand.
+//     so balances entered by hand always stand.
 //   - Every callable requires the caller to be a household member (see guard.ts), so a
 //     stranger with the public web config can never drive the sync.
 //   - Read only. Plaid returns scoped tokens, never the institution login or password.
@@ -49,15 +49,18 @@ const PLAID_ENV = defineString('PLAID_ENV', { default: 'sandbox' })
 // Empty in sandbox (the test login does not use OAuth); set in production. See README.
 const PLAID_REDIRECT_URI = defineString('PLAID_REDIRECT_URI', { default: '' })
 
-const HOUSEHOLD_ID = 'primary'
 const REGION = 'us-east1'
 
 // The secret-free sync status the client reads (inside the household subtree, so the
 // member rules cover it). Never holds a token or key.
-const STATUS_DOC = `households/${HOUSEHOLD_ID}/meta/plaidStatus`
+function statusDoc(hid: string): string {
+  return `households/${hid}/meta/plaidStatus`
+}
 // The in-flight Link token, persisted so an OAuth redirect (a full page navigation in
-// production Betterment) can resume the Link flow. Short-lived and safe for members.
-const LINK_DRAFT_DOC = `households/${HOUSEHOLD_ID}/meta/plaidLinkDraft`
+// production) can resume the Link flow. Short-lived and safe for members.
+function linkDraftDoc(hid: string): string {
+  return `households/${hid}/meta/plaidLinkDraft`
+}
 
 if (getApps().length === 0) initializeApp()
 
@@ -81,10 +84,10 @@ interface PlaidStatusPatch {
 
 // Best-effort status write: the status doc is a courtesy to the UI, so a failure here
 // must never fail the operation that triggered it.
-async function writeStatus(patch: PlaidStatusPatch): Promise<void> {
+async function writeStatus(hid: string, patch: PlaidStatusPatch): Promise<void> {
   try {
     await db()
-      .doc(STATUS_DOC)
+      .doc(statusDoc(hid))
       .set({ ...patch, updatedAt: FieldValue.serverTimestamp() }, { merge: true })
   } catch (err) {
     console.warn('plaidStatus write failed (non-fatal)', err)
@@ -138,11 +141,11 @@ function plaidClient(): PlaidApi {
 
 // plaidClient, plus a best-effort status write when the keys are missing, so the UI can
 // render the not-configured state from the doc instead of only ever learning via errors.
-async function requirePlaidClient(): Promise<PlaidApi> {
+async function requirePlaidClient(hid: string): Promise<PlaidApi> {
   try {
     return plaidClient()
   } catch (err) {
-    await writeStatus({ configured: false, env: envName() })
+    await writeStatus(hid, { configured: false, env: envName() })
     throw err
   }
 }
@@ -182,11 +185,11 @@ interface SyncResult {
 export const createPlaidLinkToken = onCall(
   { secrets: [PLAID_CLIENT_ID, PLAID_SECRET], region: REGION, timeoutSeconds: 30 },
   async (request) => {
-    await requireMember(request)
-    const client = await requirePlaidClient()
+    const { householdId } = await requireMember(request)
+    const client = await requirePlaidClient(householdId)
     const redirectUri = (PLAID_REDIRECT_URI.value() || '').trim()
     const res = await client.linkTokenCreate({
-      user: { client_user_id: HOUSEHOLD_ID },
+      user: { client_user_id: householdId },
       client_name: 'Tre',
       // Investments only: the sync reads balances and investment holdings and nothing
       // else, so the token asks for exactly that scope.
@@ -198,12 +201,12 @@ export const createPlaidLinkToken = onCall(
       ...(redirectUri ? { redirect_uri: redirectUri } : {}),
     })
     const linkToken = res.data.link_token
-    await writeStatus({ configured: true, env: envName() })
+    await writeStatus(householdId, { configured: true, env: envName() })
     // Persist the draft so the OAuth redirect page-load can resume Link with this token.
     // Best effort: without it the same-page flow still works end to end.
     try {
       await db()
-        .doc(LINK_DRAFT_DOC)
+        .doc(linkDraftDoc(householdId))
         .set({ linkToken, createdAt: FieldValue.serverTimestamp() })
     } catch (err) {
       console.warn('plaidLinkDraft write failed (non-fatal)', err)
@@ -217,12 +220,12 @@ export const createPlaidLinkToken = onCall(
 export const exchangePlaidPublicToken = onCall(
   { secrets: [PLAID_CLIENT_ID, PLAID_SECRET], region: REGION, timeoutSeconds: 60 },
   async (request) => {
-    await requireMember(request)
+    const { householdId } = await requireMember(request)
     const publicToken = (request.data as { publicToken?: string } | undefined)?.publicToken
     if (!publicToken) throw new HttpsError('invalid-argument', 'A public token is required.')
 
-    const client = await requirePlaidClient()
-    const previousToken = await storedAccessToken()
+    const client = await requirePlaidClient(householdId)
+    const previousToken = await storedAccessToken(householdId)
     const exchange = await client.itemPublicTokenExchange({ public_token: publicToken })
     const accessToken = exchange.data.access_token
     const itemId = exchange.data.item_id
@@ -240,16 +243,16 @@ export const exchangePlaidPublicToken = onCall(
 
     // Store the access token in the deny-all item doc (clients can never read this).
     await db()
-      .doc(`plaidItems/${HOUSEHOLD_ID}`)
+      .doc(`plaidItems/${householdId}`)
       .set(
         { accessToken, itemId, connectedAt: FieldValue.serverTimestamp() },
         { merge: true },
       )
-    await writeStatus({ configured: true, env: envName(), connected: true })
+    await writeStatus(householdId, { configured: true, env: envName(), connected: true })
 
     // The link token in the draft is consumed by this exchange; clear it (best effort).
     try {
-      await db().doc(LINK_DRAFT_DOC).delete()
+      await db().doc(linkDraftDoc(householdId)).delete()
     } catch (err) {
       console.warn('plaidLinkDraft delete failed (non-fatal)', err)
     }
@@ -258,11 +261,11 @@ export const exchangePlaidPublicToken = onCall(
     // right after linking, or a transient error) must not fail the connect: report
     // connected and let the user pull balances with Sync now once they are available.
     try {
-      const synced = await syncBalances(client, accessToken)
+      const synced = await syncBalances(client, accessToken, householdId)
       return { connected: true, ...synced } satisfies SyncResult
     } catch (err) {
       console.error('exchangePlaidPublicToken: first sync failed', err)
-      await writeStatus({ lastSyncError: errorMessage(err) })
+      await writeStatus(householdId, { lastSyncError: errorMessage(err) })
       return { connected: true, updated: 0, accounts: [] } satisfies SyncResult
     }
   },
@@ -272,17 +275,17 @@ export const exchangePlaidPublicToken = onCall(
 export const syncPlaidBalances = onCall(
   { secrets: [PLAID_CLIENT_ID, PLAID_SECRET], region: REGION, timeoutSeconds: 60 },
   async (request): Promise<SyncResult> => {
-    await requireMember(request)
-    const client = await requirePlaidClient()
-    const accessToken = await storedAccessToken()
+    const { householdId } = await requireMember(request)
+    const client = await requirePlaidClient(householdId)
+    const accessToken = await storedAccessToken(householdId)
     if (!accessToken) {
-      await writeStatus({ configured: true, env: envName(), connected: false })
+      await writeStatus(householdId, { configured: true, env: envName(), connected: false })
       throw notConnectedError()
     }
     try {
-      return await syncBalances(client, accessToken)
+      return await syncBalances(client, accessToken, householdId)
     } catch (err) {
-      await writeStatus({ lastSyncError: errorMessage(err) })
+      await writeStatus(householdId, { lastSyncError: errorMessage(err) })
       throw err
     }
   },
@@ -294,13 +297,13 @@ export const syncPlaidBalances = onCall(
 export const setPlaidAccountMapping = onCall(
   { secrets: [PLAID_CLIENT_ID, PLAID_SECRET], region: REGION, timeoutSeconds: 60 },
   async (request): Promise<SyncResult> => {
-    await requireMember(request)
+    const { householdId } = await requireMember(request)
     const raw = (request.data as { mappings?: unknown } | undefined)?.mappings
     if (!Array.isArray(raw)) {
       throw new HttpsError('invalid-argument', 'A mappings array is required.')
     }
 
-    const accountsCol = db().collection(`households/${HOUSEHOLD_ID}/accounts`)
+    const accountsCol = db().collection(`households/${householdId}/accounts`)
     const ourSnap = await accountsCol.get()
     // The household's real account docs are the source of truth for what a Plaid account
     // may map to; anything else in the payload resolves to null (unmap), never a write to
@@ -356,16 +359,16 @@ export const setPlaidAccountMapping = onCall(
     await batch.commit()
 
     // Pull fresh balances onto the now-correct mapping.
-    const client = await requirePlaidClient()
-    const accessToken = await storedAccessToken()
+    const client = await requirePlaidClient(householdId)
+    const accessToken = await storedAccessToken(householdId)
     if (!accessToken) {
-      await writeStatus({ configured: true, env: envName(), connected: false })
+      await writeStatus(householdId, { configured: true, env: envName(), connected: false })
       throw notConnectedError()
     }
     try {
-      return await syncBalances(client, accessToken)
+      return await syncBalances(client, accessToken, householdId)
     } catch (err) {
-      await writeStatus({ lastSyncError: errorMessage(err) })
+      await writeStatus(householdId, { lastSyncError: errorMessage(err) })
       throw err
     }
   },
@@ -377,20 +380,25 @@ export const setPlaidAccountMapping = onCall(
 export const scheduledPlaidSync = onSchedule(
   { schedule: 'every 24 hours', secrets: [PLAID_CLIENT_ID, PLAID_SECRET], region: REGION, timeoutSeconds: 120 },
   async () => {
-    const accessToken = await storedAccessToken()
-    if (!accessToken) return // Not connected; nothing to do.
-    try {
-      const client = await requirePlaidClient()
-      await syncBalances(client, accessToken)
-    } catch (err) {
-      console.error('scheduledPlaidSync failed', err)
-      await writeStatus({ lastSyncError: errorMessage(err) })
+    // Every connected household has one plaidItems doc keyed by its household id.
+    const items = await db().collection('plaidItems').get()
+    for (const item of items.docs) {
+      const hid = item.id
+      const accessToken = item.data()?.accessToken as string | undefined
+      if (!accessToken) continue
+      try {
+        const client = await requirePlaidClient(hid)
+        await syncBalances(client, accessToken, hid)
+      } catch (err) {
+        console.error(`scheduledPlaidSync failed for ${hid}`, err)
+        await writeStatus(hid, { lastSyncError: errorMessage(err) })
+      }
     }
   },
 )
 
-async function storedAccessToken(): Promise<string | undefined> {
-  const itemSnap = await db().doc(`plaidItems/${HOUSEHOLD_ID}`).get()
+async function storedAccessToken(hid: string): Promise<string | undefined> {
+  const itemSnap = await db().doc(`plaidItems/${hid}`).get()
   return itemSnap.exists ? (itemSnap.data()?.accessToken as string | undefined) : undefined
 }
 
@@ -408,8 +416,8 @@ function heuristicAccountId(plaidAccount: AccountBase): string | null {
 // Fetch balances (and the more precise investment market values from holdings) and write
 // them onto our mapped accounts. Returns every synced Plaid account so the client can show
 // them for mapping. Never touches a manual account that has no plaidAccountId and matches
-// nothing, so Lisa's hand-entered savings always stand.
-async function syncBalances(client: PlaidApi, accessToken: string): Promise<SyncResult> {
+// nothing, so hand-entered balances always stand.
+async function syncBalances(client: PlaidApi, accessToken: string, hid: string): Promise<SyncResult> {
   // Balances for all accounts (depository, cash, and investment).
   const balRes = await client.accountsBalanceGet({ access_token: accessToken })
   const plaidAccounts = balRes.data.accounts
@@ -427,7 +435,7 @@ async function syncBalances(client: PlaidApi, accessToken: string): Promise<Sync
     console.warn('investmentsHoldingsGet unavailable, using balance/get only', err)
   }
 
-  const ourSnap = await db().collection(`households/${HOUSEHOLD_ID}/accounts`).get()
+  const ourSnap = await db().collection(`households/${hid}/accounts`).get()
   const ours = ourSnap.docs.map((d) => ({
     id: d.id,
     name: (d.data().name as string) ?? '',
@@ -474,10 +482,10 @@ async function syncBalances(client: PlaidApi, accessToken: string): Promise<Sync
     })
 
     // Write the balance only onto an explicitly mapped account. A heuristic match is a
-    // suggestion, not a write, so a manual balance (Lisa, or anything not yet mapped) stands.
+    // suggestion, not a write, so a manual balance (anything not yet mapped) stands.
     if (balance == null || !explicit) continue
     batch.set(
-      db().doc(`households/${HOUSEHOLD_ID}/accounts/${explicit.id}`),
+      db().doc(`households/${hid}/accounts/${explicit.id}`),
       { balance: Math.round(balance * 100) / 100, plaidAccountId: pa.account_id },
       { merge: true },
     )
@@ -486,13 +494,13 @@ async function syncBalances(client: PlaidApi, accessToken: string): Promise<Sync
 
   // A small server-side audit stamp (the deny-all rules keep this off the client).
   batch.set(
-    db().doc(`plaidItems/${HOUSEHOLD_ID}`),
+    db().doc(`plaidItems/${hid}`),
     { lastSyncedAt: FieldValue.serverTimestamp() },
     { merge: true },
   )
   await batch.commit()
   // A sync just succeeded, so the status doc reflects it (and clears any stale error).
-  await writeStatus({
+  await writeStatus(hid, {
     configured: true,
     env: envName(),
     connected: true,

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Sheet } from './Sheet'
 import { Field } from './Field'
 import { Button } from './Button'
+import { ConfirmDeleteButton } from './ConfirmDeleteButton'
 import { Segmented } from './Segmented'
 import { CategoryChip } from './CategoryChip'
 import { clampToCents, formatCurrency, groupAmount, parseAmount, titleCase } from '../lib/format'
@@ -90,11 +91,7 @@ export function PackageSheet({
       title={pkg ? 'Edit package' : 'Add package'}
       footer={
         <div className="flex gap-3">
-          {onDelete && (
-            <Button variant="destructive" onClick={onDelete}>
-              Delete
-            </Button>
-          )}
+          {onDelete && <ConfirmDeleteButton onConfirm={onDelete} />}
           <Button fullWidth disabled={!canSave || submitting} aria-busy={submitting} onClick={() => void handleSave()}>
             Save package
           </Button>

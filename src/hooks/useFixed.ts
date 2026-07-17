@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CONFIG_STALE_TIME } from '../lib/queryClient'
+import { CONFIG_GC_TIME, CONFIG_STALE_TIME } from '../lib/queryClient'
 import type { FixedExpense } from '../types'
 import { createFixed, deleteFixed, listFixed, updateFixed, type FixedPatch, type FixedWrite } from '../services/fixed'
 
@@ -10,7 +10,7 @@ const EMPTY_FIXED = Object.freeze([]) as unknown as FixedExpense[]
 
 export function useFixed() {
   const qc = useQueryClient()
-  const query = useQuery({ queryKey: KEY, queryFn: listFixed, staleTime: CONFIG_STALE_TIME })
+  const query = useQuery({ queryKey: KEY, queryFn: listFixed, staleTime: CONFIG_STALE_TIME, gcTime: CONFIG_GC_TIME })
   const invalidate = () => qc.invalidateQueries({ queryKey: KEY })
 
   const create = useMutation({

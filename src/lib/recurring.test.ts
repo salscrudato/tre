@@ -26,7 +26,7 @@ const bill = (over: Partial<FixedExpense>): FixedExpense => ({
   amount: 100,
   categoryId: 'cat',
   dueDay: 1,
-  owner: 'Lisa',
+  owner: 'Sam',
   active: true,
   ...over,
 })
@@ -64,13 +64,13 @@ describe('defaultLever', () => {
   })
 
   it('classes fixed bills and grocery lines as necessities', () => {
-    expect(defaultLever({ name: 'PSEG' }, utilities)).toBe('necessity')
-    expect(defaultLever({ name: 'Butcher Box (Groceries)' }, groceries)).toBe('necessity')
+    expect(defaultLever({ name: 'Electric' }, utilities)).toBe('necessity')
+    expect(defaultLever({ name: 'Meat box (Groceries)' }, groceries)).toBe('necessity')
   })
 
   it('classes subscriptions as discretionary, including a sub filed under a fixed category', () => {
     expect(defaultLever({ name: 'Netflix' }, subscriptions)).toBe('discretionary')
-    expect(defaultLever({ name: 'Tesla Subscription' }, cat('c', 'Transportation', 'fixed'))).toBe(
+    expect(defaultLever({ name: 'Car Subscription' }, cat('c', 'Transportation', 'fixed'))).toBe(
       'discretionary',
     )
   })
@@ -110,20 +110,20 @@ describe('recurringImpact', () => {
   })
 
   it('a utility without an alternative offers a cheaper tier, never a hollow cut', () => {
-    const impact = recurringImpact(bill({ name: 'PSEG', amount: 200, categoryId: 'cat_utilities' }), utilities, ctx)
+    const impact = recurringImpact(bill({ name: 'Electric', amount: 200, categoryId: 'cat_utilities' }), utilities, ctx)
     expect(impact).toEqual({ kind: 'utility-tier' })
     const att = recurringImpact(bill({ name: 'AT&T (phone)', amount: 171, categoryId: 'cat_utilities' }), utilities, ctx)
     expect(att).toEqual({ kind: 'utility-tier' })
   })
 
   it('insurance without an alternative offers shopping the rate, never a coverage cut', () => {
-    const impact = recurringImpact(bill({ name: 'Geico', amount: 150, categoryId: 'cat_insurance' }), insurance, ctx)
+    const impact = recurringImpact(bill({ name: 'Car insurance', amount: 150, categoryId: 'cat_insurance' }), insurance, ctx)
     expect(impact).toEqual({ kind: 'insurance-shop' })
   })
 
   it('necessity groceries without an alternative offer a store-brand swap', () => {
     const impact = recurringImpact(
-      bill({ name: 'Butcher Box (Groceries)', amount: 306, categoryId: 'cat_groceries' }),
+      bill({ name: 'Meat box (Groceries)', amount: 306, categoryId: 'cat_groceries' }),
       groceries,
       ctx,
     )
@@ -131,7 +131,7 @@ describe('recurringImpact', () => {
   })
 
   it('childcare is a fixed necessity framed as a future tailwind, never a cut', () => {
-    const impact = recurringImpact(bill({ name: 'Daycare', amount: 1900, categoryId: 'cat_childcare' }), childcare, ctx)
+    const impact = recurringImpact(bill({ name: 'Childcare', amount: 1900, categoryId: 'cat_childcare' }), childcare, ctx)
     expect(impact).toEqual({ kind: 'childcare-tailwind', monthly: 1900, endLabel: null })
   })
 
@@ -147,7 +147,7 @@ describe('recurringImpact', () => {
       expect(ends.endLabel).toBe('December 2026')
     }
     const loans = recurringImpact(
-      bill({ name: 'Student Loans (Sal)', amount: 125, categoryId: 'cat_debt' }),
+      bill({ name: 'Student loans', amount: 125, categoryId: 'cat_debt' }),
       debt,
       ctx,
     )
@@ -156,7 +156,7 @@ describe('recurringImpact', () => {
 
   it('a necessity with an alternative saves only the difference', () => {
     const impact = recurringImpact(
-      bill({ name: 'Butcher Box', amount: 306, categoryId: 'cat_groceries', alternativeAmount: 150 }),
+      bill({ name: 'Meat box', amount: 306, categoryId: 'cat_groceries', alternativeAmount: 150 }),
       groceries,
       ctx,
     )
@@ -169,7 +169,7 @@ describe('recurringImpact', () => {
 
   it('an alternative that is not cheaper is ignored (the cheaper-tier invitation remains)', () => {
     const impact = recurringImpact(
-      bill({ name: 'PSEG', amount: 200, categoryId: 'cat_utilities', alternativeAmount: 250 }),
+      bill({ name: 'Electric', amount: 200, categoryId: 'cat_utilities', alternativeAmount: 250 }),
       utilities,
       ctx,
     )
@@ -203,7 +203,7 @@ describe('recurringImpact', () => {
     expect(disc.kind).toBe('discretionary-cut')
 
     const nec = recurringImpact(
-      bill({ name: 'PSEG', amount: 200, categoryId: 'cat_utilities', alternativeAmount: 199.8 }),
+      bill({ name: 'Electric', amount: 200, categoryId: 'cat_utilities', alternativeAmount: 199.8 }),
       utilities,
       ctx,
     )
@@ -212,7 +212,7 @@ describe('recurringImpact', () => {
 
   it('keeps an alternative that saves at least a dollar', () => {
     const impact = recurringImpact(
-      bill({ name: 'PSEG', amount: 200, categoryId: 'cat_utilities', alternativeAmount: 199 }),
+      bill({ name: 'Electric', amount: 200, categoryId: 'cat_utilities', alternativeAmount: 199 }),
       utilities,
       ctx,
     )

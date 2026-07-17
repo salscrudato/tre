@@ -3,12 +3,12 @@ import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { ChevronLeftIcon } from '../components/icons/ui'
 import { PlusIcon } from '../components/icons/nav'
-import { useAuth } from '../context/auth-context'
 import { useFixed } from '../hooks/useFixed'
+import { useOwners } from '../hooks/useOwners'
 import { usePackages } from '../hooks/usePackages'
 import { useHouseModel } from '../hooks/useHouseModel'
 import { recurringImpact, type RecurringContext, type RecurringImpact } from '../lib/recurring'
-import { billActiveOn, billCoverage, billMonthlyAmount, memberFromUser, monthKey } from '../lib/summary'
+import { billActiveOn, billCoverage, billMonthlyAmount, monthKey } from '../lib/summary'
 import { perSessionCost, remainingValue, sessionsRemaining } from '../lib/packages'
 import { recordBillPayment, recordPackagePurchase } from '../services/transactions'
 import { showToast } from '../lib/toast'
@@ -17,11 +17,12 @@ import { resolveCategoryIcon } from '../config/icons'
 import { Card } from '../components/Card'
 import { Button } from '../components/Button'
 import { Money } from '../components/Money'
+import { ProgressBar } from '../components/ProgressBar'
 import { Spinner } from '../components/Spinner'
 import { BillImpactLine } from '../components/BillImpact'
 import { BillSheet, type BillFormData } from '../components/BillSheet'
 import { PackageSheet, type PackageFormData } from '../components/PackageSheet'
-import type { Category, FixedExpense, MemberName, Package } from '../types'
+import type { Category, FixedExpense, Package } from '../types'
 
 type SheetState = { mode: 'add' } | { mode: 'edit'; bill: FixedExpense } | null
 type PackageSheetState = { mode: 'add' } | { mode: 'edit'; pkg: Package } | null
@@ -47,8 +48,17 @@ function CategoryTag({ category }: { category: Category | undefined }) {
   )
 }
 
+// Where a monthly bill sits within the current month, for the row status chip: it has
+// come due once its billing day has passed, is due today on the day, or is still upcoming.
+// This is a due-date position, not a confirmed payment, so the copy never claims "paid".
+function billMonthStatus(dueDay: number, dayOfMonth: number): { chip: string; due: boolean } {
+  if (dueDay < dayOfMonth) return { chip: 'Came due', due: true }
+  if (dueDay === dayOfMonth) return { chip: 'Due today', due: true }
+  const days = dueDay - dayOfMonth
+  return { chip: `In ${days} ${days === 1 ? 'day' : 'days'}`, due: false }
+}
+
 export default function Recurring() {
-  const { user } = useAuth()
   const qc = useQueryClient()
   // Share the one reconciled model with every other screen, so the per-bill home impact
   // and the house contribution use the same stepped (September) schedule and the same
@@ -89,14 +99,32 @@ export default function Recurring() {
   // exactly their sum, so the parts always tie. Savings contributions are excluded:
   // saving is not a cost. A bill in a deleted category counts as fixed, never dropped.
   // Every figure is the bill's monthly cost, so a paid-in-full bill counts its spread.
-  const fixedOnly = liveBills
-    .filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type !== 'variable' && categoryById.get(bill.categoryId)?.type !== 'savings')
-    .reduce((sum, bill) => sum + billMonthlyAmount(bill), 0)
-  const inSpendingMoney = liveBills
-    .filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type === 'variable')
-    .reduce((sum, bill) => sum + billMonthlyAmount(bill), 0)
-  const totalFixed = fixedOnly + inSpendingMoney
+  const { fixedOnly, inSpendingMoney, totalFixed } = useMemo(() => {
+    const only = liveBills
+      .filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type !== 'variable' && categoryById.get(bill.categoryId)?.type !== 'savings')
+      .reduce((sum, bill) => sum + billMonthlyAmount(bill), 0)
+    const inBudget = liveBills
+      .filter((bill) => bill.active && categoryById.get(bill.categoryId)?.type === 'variable')
+      .reduce((sum, bill) => sum + billMonthlyAmount(bill), 0)
+    return { fixedOnly: only, inSpendingMoney: inBudget, totalFixed: only + inBudget }
+  }, [liveBills, categoryById])
   const percentOfIncome = income > 0 ? totalFixed / income : 0
+
+  // Where the month stands on its bills: how much of the monthly total has already come
+  // due (a monthly bill once its billing day has passed, a paid-in-full bill for the
+  // whole active window), against the full monthly total. A real "spend to date" for the
+  // recurring bills, resetting each month. Savings transfers are excluded, matching the
+  // total above. The remainder is what is still to come before month end.
+  const dayOfMonth = today.getDate()
+  const dueToDate = useMemo(
+    () =>
+      liveBills
+        .filter((b) => b.active && categoryById.get(b.categoryId)?.type !== 'savings')
+        .filter((b) => billCoverage(b, today) != null || b.dueDay <= dayOfMonth)
+        .reduce((sum, b) => sum + billMonthlyAmount(b), 0),
+    [liveBills, categoryById, today, dayOfMonth],
+  )
+  const stillToCome = Math.max(0, totalFixed - dueToDate)
 
   // The two house deposits map to the two paydays: show them as one House savings line
   // with both scheduled deposits, never as duplicate-looking rows. The underlying bills
@@ -137,7 +165,7 @@ export default function Recurring() {
   )
   const depositDaysText = activeHouseBills.map((b) => `day ${b.dueDay}`).join(' and ')
 
-  const createdBy: MemberName = memberFromUser(user)
+  const { currentOwner: createdBy } = useOwners()
 
   // Packages live in the discretionary categories (their sessions are day-to-day
   // spend); sessions are logged from the Quick Add. Savings buckets stay out: a
@@ -207,6 +235,7 @@ export default function Recurring() {
 
   return (
     <div className="flex flex-col gap-6">
+      <h1 className="sr-only">Bills</h1>
       <Link
         to="/budget"
         aria-label="Back to Budget"
@@ -225,6 +254,27 @@ export default function Recurring() {
               <span className="text-callout text-ink-2">
                 <span className="tnum">{formatPercent(percentOfIncome)}</span> of our monthly take-home
               </span>
+            )}
+            {totalFixed > 0 && (
+              <div className="mt-4 flex flex-col gap-2 border-t border-line pt-4">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-caption text-muted">Due so far this month</span>
+                  <span className="tnum text-caption text-ink-2">
+                    {formatCurrency(dueToDate, { cents: false })} of {formatCurrency(totalFixed, { cents: false })}
+                  </span>
+                </div>
+                <ProgressBar value={dueToDate} max={totalFixed} positive showLabel={false} />
+                <span className="text-caption text-muted">
+                  {stillToCome > 0.5 ? (
+                    <>
+                      <span className="tnum text-ink-2">{formatCurrency(stillToCome, { cents: false })}</span> still to
+                      come before month end
+                    </>
+                  ) : (
+                    <>Every bill for the month has come due.</>
+                  )}
+                </span>
+              </div>
             )}
             {inSpendingMoney > 0 && (
               <div className="mt-4 flex flex-col gap-2 border-t border-line pt-4">
@@ -287,6 +337,7 @@ export default function Recurring() {
               const category = categoryById.get(bill.categoryId)
               const impact = impactByBillId.get(bill.id) ?? null
               const coverage = billCoverage(bill, today)
+              const status = bill.active && !coverage ? billMonthStatus(bill.dueDay, dayOfMonth) : null
               return (
                 <li key={bill.id} className="border-b border-line last:border-b-0">
                   <button
@@ -295,9 +346,22 @@ export default function Recurring() {
                     className="flex w-full flex-col gap-1.5 px-4 py-3 text-left transition-colors duration-[var(--dur-fast)] hover:bg-surface-2 active:bg-line-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
                   >
                     <span className="flex items-center justify-between gap-3">
-                      <span className="truncate text-callout font-medium text-ink">
-                        {titleCase(bill.name)}
-                        {!bill.active && <span className="text-caption font-normal text-muted"> (paused)</span>}
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-callout font-medium text-ink">
+                          {titleCase(bill.name)}
+                          {!bill.active && <span className="text-caption font-normal text-muted"> (paused)</span>}
+                        </span>
+                        {status && (
+                          <span
+                            className={
+                              status.due
+                                ? 'shrink-0 rounded-pill bg-[color-mix(in_srgb,var(--color-positive)_14%,transparent)] px-1.5 py-0.5 text-[11px] font-semibold text-positive-strong'
+                                : 'shrink-0 rounded-pill bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-muted'
+                            }
+                          >
+                            {status.chip}
+                          </span>
+                        )}
                       </span>
                       <Money
                         amount={billMonthlyAmount(bill)}

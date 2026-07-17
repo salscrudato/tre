@@ -1,9 +1,10 @@
 # Tre
 
-A private, two-person household finance PWA for one married couple. It makes the future
-cost of spending visceral (the 1, 10, and 30 year if-invested impact of every expense) so
-the couple can maximize savings toward a house down payment. Not a product for sale: two
-users, one shared household, on Firebase project `sallisascru`.
+A private household finance PWA for a couple. It makes the future cost of spending
+visceral (the 1, 10, and 30 year if-invested impact of every expense) so a household can
+maximize savings toward a house down payment. Each household is private to its members:
+a new user creates one through the guided first run and can invite one partner. Runs on
+Firebase project `sallisascru`.
 
 Read `CLAUDE.md`, then `docs/ARCHITECTURE.md` and `docs/DESIGN_SYSTEM.md`, before changing
 anything.
@@ -29,8 +30,7 @@ firebase deploy --only hosting,firestore:rules,functions   # ship
 
 Optional. The household can connect Betterment in Settings to pull read-only balances; it
 never sees a login or password, and entering balances by hand always works as the free
-fallback. Manual accounts (no `plaidAccountId`, such as Lisa's savings) are never
-overwritten by a sync.
+fallback. Manual accounts (no `plaidAccountId`) are never overwritten by a sync.
 
 Cloud Functions (`functions/src/plaid.ts`), each requiring an authenticated household
 member:
@@ -73,3 +73,28 @@ functions (`firebase deploy --only functions`). Nothing else changes.
 Paste the new value into a temporary file (kept out of git by `.gitignore`), run
 `firebase functions:secrets:set <NAME> --data-file <file>`, redeploy functions, then delete
 the file. Never commit a real key.
+
+## App store readiness (later, separate step; nothing here is published)
+
+The app ships today as an installable PWA (full manifest, maskable icon, offline shell,
+install affordance in Settings, privacy page at `/privacy.html`). Publishing to the app
+stores is a deliberate later step; when it happens:
+
+1. **Wrap natively with Capacitor.** `npm i @capacitor/core @capacitor/ios && npx cap init`
+   pointing `webDir` at `dist`, then `npx cap add ios` and open the Xcode project. The PWA
+   runs unchanged inside the shell; revisit Google sign in inside a WKWebView (use the
+   Capacitor Firebase Auth plugin or the redirect flow) before submitting.
+2. **Store listing essentials.** An App Store icon at 1024x1024 with no alpha (export from
+   `src/components/AppIcon.tsx`), the privacy policy URL (`/privacy.html` on the live
+   domain), the App Privacy questionnaire (financial info, identifiers; no tracking), a
+   short description in the app's plain voice, and the finance category.
+3. **Screenshots (not taken yet).** Apple requires 6.7 inch iPhone shots at 1290x2796 and,
+   if iPad is enabled, 13 inch iPad shots at 2064x2752. Capture Home (Quick Add), Spending,
+   Budget, and House in light mode at minimum; dark variants optional.
+4. **Android later, if wanted.** Play accepts a Trusted Web Activity around the same PWA
+   (Bubblewrap), needing a 512 icon and a 1024x500 feature graphic.
+
+The iOS splash on cold start is intentionally the sprout-on-empty-root fallback; a full
+`apple-touch-startup-image` set can be generated in this pass if the native wrap wants it.
+The Android install splash is light by design (the manifest is light-first; the in-page
+theme-color syncs to dark after boot).

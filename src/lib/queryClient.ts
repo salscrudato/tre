@@ -6,6 +6,9 @@ import { showToast } from './toast'
 // spares an eight-read refetch storm on each app resume with no real freshness loss. The
 // transaction ledger keeps the shorter default so it still refreshes promptly on focus.
 export const CONFIG_STALE_TIME = 10 * 60_000
+// Cache config data longer than it stays fresh, or garbage collection would evict an
+// unobserved config query before its staleness window ever pays off.
+export const CONFIG_GC_TIME = 15 * 60_000
 
 // Shared TanStack Query client. Reads are cached and refetched on focus so the
 // other member's changes surface without a hard reload; writes invalidate keys.

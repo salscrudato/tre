@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { AlertIcon, ChevronLeftIcon, ChevronRightIcon, SparkleIcon } from '../components/icons/ui'
 import { CloseIcon } from '../components/icons/nav'
 import { useHousehold } from '../hooks/useHousehold'
@@ -13,7 +13,6 @@ import { useTransactions } from '../hooks/useTransactions'
 import { useToday } from '../hooks/useToday'
 import { useAdvice } from '../hooks/useAdvice'
 import { useAdviceArchive } from '../hooks/useAdviceArchive'
-import { useLogExpense } from '../hooks/useLogExpense'
 import {
   parseArchivedAdvice,
   resolveAdviceActions,
@@ -26,7 +25,7 @@ import { houseContext, findHouseGoal } from '../lib/house'
 import { householdPlan } from '../lib/plan'
 import { effectiveLever } from '../lib/recurring'
 import { buildBudgetView, savingsRateMonthly } from '../lib/budget'
-import { capitalizeFirst, formatCurrency, formatDate } from '../lib/format'
+import { capitalizeFirst, formatCurrency, formatDate, formatPercent } from '../lib/format'
 import { billActiveOn, billMonthlyAmount, monthBounds, monthKey } from '../lib/summary'
 import { DEFAULTS } from '../config/app'
 import { Card } from '../components/Card'
@@ -35,11 +34,7 @@ import { Field } from '../components/Field'
 import { Money } from '../components/Money'
 import { Sheet } from '../components/Sheet'
 import { Spinner } from '../components/Spinner'
-import { ScanIcon } from '../components/icons/Scan'
 
-// Loaded on demand when the couple taps to scan a receipt, keeping the image and capture
-// code out of the Optimize route's chunk.
-const ReceiptSheet = lazy(() => import('../components/ReceiptSheet').then((m) => ({ default: m.ReceiptSheet })))
 
 // One calm state card shared by the resting, cleared, and unreadable states: a quiet
 // glyph over a single line, with generous, uniform negative space so the page never
@@ -83,6 +78,11 @@ function AdviceProgress() {
 
 export default function Optimize() {
   const { household } = useHousehold()
+  // The page is entered from Spending (the over-budget card) and from House; the back
+  // link returns to wherever the user actually came from, defaulting to House.
+  const location = useLocation()
+  const cameFrom = (location.state as { from?: string } | null)?.from
+  const backTo = cameFrom === '/spending' ? { path: '/spending', label: 'Spending' } : { path: '/house', label: 'House' }
   const settings = household?.settings
   const annualReturn = settings?.assumedAnnualReturn ?? DEFAULTS.assumedAnnualReturn
 
@@ -116,9 +116,7 @@ export default function Optimize() {
   )
   const horizonValid = house ? horizonIsValid(house.targetDate, today) : false
 
-  const { logExpense } = useLogExpense()
   const [dismissed, setDismissed] = useState<Set<number>>(new Set())
-  const [receiptOpen, setReceiptOpen] = useState(false)
   // An optional grounded question for the model, the one the current result actually
   // answered, and the snapshot that request was grounded in, so every figure on the
   // result cards resolves against the exact numbers the model saw.
@@ -248,20 +246,21 @@ export default function Optimize() {
 
   return (
     <div className="flex flex-col gap-6">
+      <h1 className="sr-only">Ways to save</h1>
       <Link
-        to="/house"
-        aria-label="Back to House"
+        to={backTo.path}
+        aria-label={`Back to ${backTo.label}`}
         className="inline-flex min-h-11 w-fit items-center gap-1 rounded-md text-callout text-ink-2 transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
       >
         <ChevronLeftIcon size={18} strokeWidth={2} aria-hidden="true" />
-        House
+        {backTo.label}
       </Link>
 
       <Card>
         <h2 className="text-h2 text-ink">Ways to save</h2>
         <p className="mt-1 text-body text-ink-2">
-          Grounded ways to raise our savings rate and home buying power. Every dollar figure is computed from our own
-          numbers, never estimated by the model.
+          Ways to save more each month and afford more home, based on your real numbers. Every dollar figure is computed
+          from your own data, never estimated by the model.
         </p>
         <div className="mt-4 flex flex-col gap-3">
           <Field
@@ -280,13 +279,6 @@ export default function Optimize() {
               onClick={handleGetAdvice}
             >
               {advice.data ? 'Refresh advice' : 'Get advice'}
-            </Button>
-            <Button
-              variant="secondary"
-              leadingIcon={<ScanIcon size={18} />}
-              onClick={() => setReceiptOpen(true)}
-            >
-              Scan or upload a receipt
             </Button>
           </div>
         </div>
@@ -380,18 +372,6 @@ export default function Optimize() {
         </section>
       )}
 
-      {receiptOpen && (
-        <Suspense fallback={null}>
-          <ReceiptSheet
-            open
-            onClose={() => setReceiptOpen(false)}
-            categories={categories}
-            onLog={async (input) => {
-              await logExpense(input, house)
-            }}
-          />
-        </Suspense>
-      )}
 
       <Sheet
         open={viewing != null}
@@ -509,7 +489,7 @@ function AdviceCard({
           </div>
           {homeAdded != null && (
             <div className="flex flex-col gap-0.5">
-              <span className="text-caption text-muted">Toward our home</span>
+              <span className="text-caption text-muted">More home we can afford</span>
               <Money amount={homeAdded} size="lg" tone="positive" compact />
             </div>
           )}
@@ -526,6 +506,10 @@ function AdviceCard({
               </div>
             ))}
           </div>
+          <span className="text-caption text-muted">
+            What this monthly saving grows into at {formatPercent(annualReturn)} a year, the long-run investing
+            assumption set in Settings.
+          </span>
         </div>
       )}
       {action.kind === 'add_alternative' && (

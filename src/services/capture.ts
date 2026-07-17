@@ -5,6 +5,7 @@
 
 import { httpsCallable } from 'firebase/functions'
 import { functions } from '../config/firebase'
+import { requireHouseholdId } from './firestore'
 import type { EncodedImageMediaType } from '../lib/image'
 
 export type CaptureMediaType = EncodedImageMediaType
@@ -17,6 +18,8 @@ export interface CaptureRequest {
   mediaType: CaptureMediaType
   // The household's variable category names; the server ensures Other is present.
   categories: string[]
+  // The active household, verified server side against the caller's membership.
+  householdId: string
 }
 
 // One expense line ready for review. Receipts arrive already grouped into a few
@@ -64,6 +67,6 @@ export async function extractExpenses(
   mediaType: CaptureMediaType,
   categories: string[],
 ): Promise<CaptureResult> {
-  const result = await callExtractExpenses({ imageBase64, mediaType, categories })
+  const result = await callExtractExpenses({ imageBase64, mediaType, categories, householdId: requireHouseholdId() })
   return result.data
 }

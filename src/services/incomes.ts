@@ -1,4 +1,4 @@
-import { deleteField, orderBy } from 'firebase/firestore'
+import { deleteField } from 'firebase/firestore'
 import type { Income } from '../types'
 import { createInCol, listCol, removeFromCol, updateInCol } from './firestore'
 
@@ -11,7 +11,9 @@ export type IncomePatch = Partial<Omit<Income, 'id' | 'startMonth'>> & { startMo
 
 // Ordered by name (always present) so the list renders in a stable, meaningful order
 // rather than document-id order.
-export const listIncomes = () => listCol<Income>(NAME, orderBy('name'))
+// Unordered fetch with a client-side sort: Firestore drops any doc missing the
+// orderBy field, so a legacy doc without a name would silently vanish.
+export const listIncomes = async () => (await listCol<Income>(NAME)).sort((a, b) => a.name.localeCompare(b.name))
 
 export const createIncome = (data: IncomeWrite) => {
   const clean: Record<string, unknown> = { ...data }

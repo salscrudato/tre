@@ -89,8 +89,8 @@ const selectClass =
 // buttons), configured (Connect, with a Test mode pill in sandbox), and connected (last
 // synced time plus Sync now). Connect once with Plaid Link (read-only), map each synced
 // account to ours by balance and last four digits, then balances refresh on their own
-// about once a day. Manual entry below always works and is how accounts not at Betterment
-// (Lisa's savings) are kept. Nothing here ever exposes a credential to the browser.
+// about once a day. Manual entry below always works and is how accounts held outside the
+// linked brokerage are kept. Nothing here ever exposes a credential to the browser.
 export function PlaidSection() {
   const qc = useQueryClient()
   const { accounts } = useAccounts()

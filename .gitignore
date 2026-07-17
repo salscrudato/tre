@@ -42,5 +42,8 @@ pnpm-debug.log*
 # Local seed data (personal financials, do not commit)
 scripts/tx-parsed.json
 
+# Generated codebase bundle (snapshots every source file, never commit)
+codebase-review.md
+
 # typescript incremental build state
 tsconfig.tsbuildinfo

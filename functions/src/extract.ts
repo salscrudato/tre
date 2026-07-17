@@ -52,7 +52,85 @@ export type ExtractResponse = ExtractSuccess | ExtractFailure
 const DETAIL_MAX_LENGTH = 200
 
 function roundCents(value: number): number {
-  return Math.round(value * 100) / 100
+  // Epsilon nudges classic float edges (1.005 * 100 is 100.4999...) onto the cent.
+  return Math.round((value + Number.EPSILON) * 100) / 100
+}
+
+// Resilient category matching. The model is asked to label each line with one of the exact
+// category names, but often returns a close variant ("Grocery", "Toiletries"). A strict
+// equality check would dump every one of those into Other, so match by normalizing,
+// comparing singular tokens, and falling back to a small synonym table keyed by the
+// standard category names. A genuine unknown still lands in Other. The client mirrors this
+// in src/lib/categoryMatch.ts (a separate package); keep the two in step.
+const CATEGORY_SYNONYMS: Record<string, string[]> = {
+  groceries: ['grocery', 'supermarket', 'market', 'food', 'produce', 'pantry', 'household', 'snacks', 'beverages', 'deli', 'bakery'],
+  dining: ['restaurant', 'takeout', 'take out', 'delivery', 'coffee', 'cafe', 'bar', 'drinks', 'lunch', 'dinner', 'meals'],
+  'personal care': ['personal', 'toiletries', 'cosmetics', 'beauty', 'hygiene', 'grooming', 'haircut', 'salon', 'makeup', 'skincare', 'shampoo'],
+  health: ['healthcare', 'medical', 'pharmacy', 'prescription', 'medicine', 'vitamins', 'supplements', 'drugstore', 'clinic', 'doctor', 'dental'],
+  subscriptions: ['subscription', 'streaming', 'membership', 'app', 'apps', 'software'],
+  transportation: ['transport', 'gas', 'fuel', 'gasoline', 'parking', 'transit', 'rideshare', 'toll', 'tolls'],
+  utilities: ['utility', 'electric', 'electricity', 'water', 'internet', 'phone', 'cable', 'wifi'],
+  housing: ['rent', 'mortgage'],
+  childcare: ['child care', 'daycare', 'babysitter', 'baby', 'diapers', 'formula'],
+  insurance: ['premium'],
+  debt: ['loan', 'loans', 'credit card', 'financing'],
+  other: ['miscellaneous', 'misc', 'general', 'uncategorized'],
+}
+
+function normalizeName(value: string): string {
+  return value.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function singular(token: string): string {
+  if (token.length > 3 && token.endsWith('ies')) return `${token.slice(0, -3)}y`
+  if (token.length > 3 && token.endsWith('es')) return token.slice(0, -2)
+  if (token.length > 3 && token.endsWith('s')) return token.slice(0, -1)
+  return token
+}
+
+function nameTokens(value: string): string[] {
+  return normalizeName(value).split(' ').filter(Boolean).map(singular)
+}
+
+function keywordSet(name: string): Set<string> {
+  const set = new Set(nameTokens(name))
+  const synonyms = CATEGORY_SYNONYMS[normalizeName(name)]
+  if (synonyms) for (const synonym of synonyms) for (const token of nameTokens(synonym)) set.add(token)
+  return set
+}
+
+// Match a raw category label to one of the provided names, or the fallback (the list's own
+// Other when present, else the literal "Other"). Deterministic: exact wins, then highest
+// token-overlap score, ties broken by list order.
+export function matchCategory(raw: string, names: string[]): string {
+  const fallback = names.find((name) => normalizeName(name) === 'other') ?? 'Other'
+  const wanted = normalizeName(raw)
+  if (!wanted) return fallback
+
+  const exact = names.find((name) => normalizeName(name) === wanted)
+  if (exact) return exact
+  const wantedTokens = nameTokens(raw).join(' ')
+  const nearExact = names.find((name) => nameTokens(name).join(' ') === wantedTokens)
+  if (nearExact) return nearExact
+
+  const rawList = nameTokens(raw)
+  const rawTokens = new Set(rawList)
+  const firstToken = rawList[0]
+  let best: string | null = null
+  let bestScore = 0
+  for (const name of names) {
+    const keywords = keywordSet(name)
+    let score = 0
+    for (const token of rawTokens) if (keywords.has(token)) score += 1
+    // Break a tie toward the category whose leading word matches, so a phrase that shares a
+    // word with two categories ("health care", "baby care") lands on the one it leads with.
+    if (firstToken && keywords.has(firstToken)) score += 0.5
+    if (score > bestScore) {
+      bestScore = score
+      best = name
+    }
+  }
+  return bestScore >= 1 && best ? best : fallback
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -124,15 +202,16 @@ export function parseExtraction(text: string): ParsedExtraction | null {
 }
 
 // Keeps only items with a positive finite amount, rounds every amount to cents,
-// re-matches the category case-insensitively against the provided list with "Other" as
-// the fallback, and nulls any date that is not a real YYYY-MM-DD calendar date.
+// resiliently matches the category against the provided list (close variants land in the
+// right place, a genuine unknown in "Other"), and nulls any date that is not a real
+// YYYY-MM-DD calendar date.
 export function normalizeItems(raw: RawExtractionItem[], categories: string[]): RawExtractionItem[] {
   return raw
     .filter((item) => Number.isFinite(item.amount) && item.amount > 0)
     .map((item) => ({
       description: item.description,
       amount: roundCents(item.amount),
-      category: categories.find((name) => name.toLowerCase() === item.category.trim().toLowerCase()) ?? 'Other',
+      category: matchCategory(item.category, categories),
       date: item.date !== null && isCalendarDate(item.date) ? item.date : null,
       confidence: item.confidence,
     }))

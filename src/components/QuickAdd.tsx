@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarIcon, CheckIcon } from './icons/ui'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { CalendarIcon, CheckIcon, NoteIcon } from './icons/ui'
 import { AmountField } from './Field'
 import { Button } from './Button'
 import { Spinner } from './Spinner'
@@ -55,7 +56,7 @@ export type QuickAddProps = {
   onUndo?: (tx: Transaction) => void
   autoFocus?: boolean
   // Recent descriptions the household has logged, offered as type-ahead suggestions on the
-  // optional Other and Dining description so a repeat entry is one tap, not retyped.
+  // optional description so a repeat entry (a store name like "Trader Joe's") is one tap.
   noteSuggestions?: string[]
   className?: string
 }
@@ -70,19 +71,12 @@ type Result = {
   logged?: Transaction
 }
 
-// Other and Dining are vague on their own, so they offer an optional short description
-// (with type-ahead suggestions) before logging. It never blocks the log; it just gives the
-// monthly Ways to save some context to learn from.
-function needsDescription(category: QuickAddCategory): boolean {
-  const name = category.name.toLowerCase()
-  return category.type === 'variable' && (name === 'other' || name === 'dining')
-}
-
 // The home logging surface, the most important flow in the app. Type an amount, then tap
 // a category tile and it logs in one motion, with a calm confirmation and nothing else.
-// Other and Dining offer an optional short description (type-ahead from what we have logged
-// before) that never blocks the log. Impact and savings analysis live only on the opt-in
-// Ways to save page now, so logging stays frictionless and never preaches.
+// Any log can carry an optional short description (a store like "Trader Joe's"): tap Add
+// note, type it, then tap a category, and it attaches. It never blocks the one-tap log.
+// Impact and savings analysis live only on the opt-in Ways to save page, so logging stays
+// frictionless and never preaches.
 export function QuickAdd({
   categories,
   savingsGoals = [],
@@ -111,7 +105,9 @@ export function QuickAdd({
   const [savingId, setSavingId] = useState<string | null>(null)
   const [errored, setErrored] = useState(false)
   const [result, setResult] = useState<Result | null>(null)
-  const [pending, setPending] = useState<QuickAddCategory | null>(null)
+  // The optional description, revealed by the Add note pill, attached to the next log of
+  // any category, including a savings deposit.
+  const [noteOpen, setNoteOpen] = useState(false)
   // A tapped category with a prepaid package: offer the session drawdown first.
   const [pendingPackage, setPendingPackage] = useState<{ category: QuickAddCategory; pkg: QuickAddPackage } | null>(
     null,
@@ -173,19 +169,19 @@ export function QuickAdd({
     prevShowDate.current = showDate
   }, [showDate])
   useEffect(() => {
-    if (pending) noteInputRef.current?.focus()
-  }, [pending])
+    if (noteOpen) noteInputRef.current?.focus()
+  }, [noteOpen])
   // Tapping a category with a prepaid package unmounts the focused tile. Move focus to the
   // panel's labelled (non-actionable) container so a keyboard or screen-reader user hears
   // the context without landing on the "Use 1 session" button (which would spend on Enter).
   useEffect(() => {
     if (pendingPackage) packagePanelRef.current?.focus()
   }, [pendingPackage])
-  // The tiles pager unmounts while the description, savings, or package panel shows, so on
-  // return it remounts scrolled to the first page; reset the active dot to match.
+  // The tiles pager unmounts while the savings or package panel shows, so on return it
+  // remounts scrolled to the first page; reset the active dot to match.
   useEffect(() => {
-    if (!pending && !pendingPackage && !pendingSavings) setActivePage(0)
-  }, [pending, pendingPackage, pendingSavings])
+    if (!pendingPackage && !pendingSavings) setActivePage(0)
+  }, [pendingPackage, pendingSavings])
 
   // The just-logged confirmation clears itself after a calm beat. Hold it a little longer
   // while an Undo is offered, so it is noticeable and tappable. No reveal, no tip: the
@@ -202,15 +198,13 @@ export function QuickAdd({
   const saving = savingId != null
   const canLog = hasAmount && !saving
 
-  // Typing a new amount clears transient feedback but keeps the package panel up:
-  // the panel itself invites typing an amount to log something new instead.
+  // Typing a new amount clears transient feedback but keeps any typed note and the package
+  // panel up: the note is a deliberate pre-tap choice, and the panel invites a fresh amount.
   function resetTransient() {
     if (errored) setErrored(false)
     if (result) setResult(null)
-    if (pending) setPending(null)
     if (pendingSavings) setPendingSavings(null)
     if (savingsNotice) setSavingsNotice(false)
-    if (note) setNote('')
   }
 
   function handlePick(category: QuickAddCategory) {
@@ -232,15 +226,11 @@ export function QuickAdd({
         setPendingSavings(category)
         return
       }
-      void logWith(category, '', savingsGoals[0].id)
+      void logWith(category, note, savingsGoals[0].id)
       return
     }
-    if (needsDescription(category)) {
-      setNote('')
-      setPending(category)
-      return
-    }
-    void logWith(category, '')
+    // Any everyday or bill category logs in one tap, carrying the optional note if typed.
+    void logWith(category, note)
   }
 
   async function logWith(category: QuickAddCategory, noteText: string, chosenGoalId?: string) {
@@ -264,7 +254,7 @@ export function QuickAdd({
       setAmount('')
       setPickedDate(null)
       setShowDate(false)
-      setPending(null)
+      setNoteOpen(false)
       setPendingPackage(null)
       setPendingSavings(null)
       setSavingsNotice(false)
@@ -304,6 +294,8 @@ export function QuickAdd({
       setPickedDate(null)
       setShowDate(false)
       setPendingPackage(null)
+      setNoteOpen(false)
+      setNote('')
       setEntryKey((key) => key + 1)
     } catch {
       setErrored(true)
@@ -312,8 +304,8 @@ export function QuickAdd({
     }
   }
 
-  // Type-ahead for the optional Other and Dining description: the household's own recent
-  // descriptions, narrowed as they type, so a repeat entry is one tap. Hidden once the
+  // Type-ahead for the optional description: the household's own recent descriptions,
+  // narrowed as they type, so a repeat entry (a store name) is one tap. Hidden once the
   // typed text already matches a suggestion exactly.
   const noteSuggestionsFiltered = useMemo(() => {
     const query = note.trim().toLowerCase()
@@ -338,9 +330,10 @@ export function QuickAdd({
         />
       </div>
 
-      {/* Date control, quiet at rest. Centered so the amount stays the focal point. A
-          Yesterday chip sits beside Today, since a day-late log is the common case. */}
-      <div className="flex items-center justify-center">
+      {/* Date and note controls, quiet at rest. Centered so the amount stays the focal
+          point. A Yesterday chip sits beside Today (a day-late log is the common case), and
+          an Add note chip attaches an optional description to the next log. */}
+      <div className="flex flex-wrap items-center justify-center gap-1.5">
         {showDate ? (
           <input
             ref={dateInputRef}
@@ -353,7 +346,7 @@ export function QuickAdd({
             className="min-h-11 rounded-pill border border-line bg-surface-2 px-3.5 py-1.5 text-center text-body text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
           />
         ) : (
-          <div className="flex items-center justify-center gap-1.5">
+          <>
             <button
               ref={dateToggleRef}
               type="button"
@@ -375,9 +368,66 @@ export function QuickAdd({
                 Yesterday
               </button>
             )}
-          </div>
+            <button
+              type="button"
+              onClick={() => setNoteOpen((open) => !open)}
+              aria-expanded={noteOpen}
+              // When empty, the visible "Add note" text is the accessible name (so voice
+              // control matches it); when filled, name it after the note it carries.
+              aria-label={note.trim() ? `Note: ${note.trim()}. Tap to edit.` : undefined}
+              className={cn(
+                'inline-flex min-h-11 max-w-[60%] items-center gap-1.5 rounded-pill px-3 py-1.5 text-callout transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                note.trim() ? 'text-accent-strong' : 'text-muted',
+              )}
+            >
+              <NoteIcon size={15} strokeWidth={1.75} aria-hidden="true" />
+              <span className="truncate">{note.trim() ? note.trim() : 'Add note'}</span>
+            </button>
+          </>
         )}
       </div>
+
+      {/* The optional description, revealed by the Add note chip. Type-ahead offers the
+          household's own recent notes (a store like "Trader Joe's"). It never blocks: the
+          tiles stay live below, so tapping a category still logs, now with the note. */}
+      {noteOpen && !pendingSavings && !pendingPackage && (
+        <div className="flex flex-col gap-2 motion-safe:animate-[pop-in_var(--dur)_var(--ease-spring)]">
+          <input
+            id="quick-note"
+            ref={noteInputRef}
+            type="text"
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') noteInputRef.current?.blur()
+            }}
+            placeholder="Trader Joe's, gas, coffee..."
+            aria-label="Description"
+            autoCapitalize="sentences"
+            autoComplete="off"
+            enterKeyHint="done"
+            className="h-12 rounded-pill border border-line bg-surface px-4 text-center text-body text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+          />
+          {noteSuggestionsFiltered.length > 0 && (
+            <div className="flex flex-wrap justify-center gap-2">
+              {noteSuggestionsFiltered.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  type="button"
+                  onClick={() => {
+                    setNote(suggestion)
+                    noteInputRef.current?.focus()
+                  }}
+                  className="flex min-h-11 min-w-0 max-w-full items-center justify-center rounded-pill border border-line bg-surface-2 px-3 py-1.5 text-caption text-ink-2 transition hover:bg-surface active:scale-[0.97] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+                >
+                  <span className="truncate">{suggestion}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="text-center text-caption text-muted">Optional. Tap a category to log it with this note.</p>
+        </div>
+      )}
 
       {/* Just-logged confirmation: a calm one-line acknowledgement, with a one-tap Undo
           while it shows. The delayed-gratification framing lives on the opt-in Ways to save
@@ -428,7 +478,7 @@ export function QuickAdd({
 
       {/* A tapped category holding a prepaid package: use a session (already paid, so
           no new outflow) or fall through to logging a fresh amount. */}
-      {pendingPackage && !pending && (
+      {pendingPackage && (
         <div
           ref={packagePanelRef}
           tabIndex={-1}
@@ -463,12 +513,7 @@ export function QuickAdd({
               onClick={() => {
                 const category = pendingPackage.category
                 setPendingPackage(null)
-                if (needsDescription(category)) {
-                  setNote('')
-                  setPending(category)
-                  return
-                }
-                void logWith(category, '')
+                void logWith(category, note)
               }}
             >
               {canLog ? `Log ${formatCurrency(amountValue, { cents: amountValue % 1 !== 0 })} instead` : 'Log an amount instead'}
@@ -480,68 +525,34 @@ export function QuickAdd({
         </div>
       )}
 
-      {pending ? (
-        /* Other and Dining offer an optional description with type-ahead from what we have
-           logged before. It never blocks: the Log button stays live whether or not a
-           description is typed, so a plain amount still logs in one tap. */
-        <div className="flex flex-col gap-3 motion-safe:animate-[pop-in_var(--dur)_var(--ease-spring)]">
-          <label htmlFor="quick-note" className="text-center text-callout text-ink-2">
-            Add a description (optional)
-          </label>
-          <input
-            id="quick-note"
-            ref={noteInputRef}
-            type="text"
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') void logWith(pending, note)
-            }}
-            placeholder="Description..."
-            autoCapitalize="sentences"
-            autoComplete="off"
-            enterKeyHint="done"
-            className="h-12 rounded-pill border border-line bg-surface px-4 text-center text-body text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-          />
-          {noteSuggestionsFiltered.length > 0 && (
-            <div className="flex flex-wrap justify-center gap-2">
-              {noteSuggestionsFiltered.map((suggestion) => (
-                <button
-                  key={suggestion}
-                  type="button"
-                  onClick={() => {
-                    setNote(suggestion)
-                    noteInputRef.current?.focus()
-                  }}
-                  className="flex min-h-11 min-w-0 max-w-full items-center justify-center rounded-pill border border-line bg-surface-2 px-3 py-1.5 text-caption text-ink-2 transition hover:bg-surface active:scale-[0.97] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-                >
-                  <span className="truncate">{suggestion}</span>
-                </button>
-              ))}
-            </div>
+      {/* The gesture instruction and any log error sit directly under the amount and note,
+          above the tiles, so a first-time user reads the two-step gesture without scrolling
+          past the grid (which the iOS keyboard would push off screen). */}
+      {!pendingPackage && !pendingSavings && (
+        <p aria-live="polite" className="min-h-[20px] text-center text-caption">
+          {errored ? (
+            <span className="text-danger">
+              {hasAmount ? (
+                <>
+                  Could not log that{' '}
+                  <span className="tnum">{formatCurrency(amountValue, { cents: amountValue % 1 !== 0 })}</span>. Tap the
+                  category to try again.
+                </>
+              ) : (
+                'Could not log that. Try again.'
+              )}
+            </span>
+          ) : savingsNotice ? (
+            <span className="text-muted">Add a savings goal in Settings first. Then a deposit here counts toward that goal.</span>
+          ) : result ? null : hasAmount ? (
+            <span className="text-muted">Tap a category to log it.</span>
+          ) : (
+            <span className="text-muted">Enter an amount, then tap a category.</span>
           )}
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setPending(null)
-                setNote('')
-              }}
-            >
-              Back
-            </Button>
-            <Button
-              fullWidth
-              disabled={saving}
-              aria-busy={saving}
-              leadingIcon={saving ? <Spinner size={18} /> : undefined}
-              onClick={() => void logWith(pending, note)}
-            >
-              Log {formatCurrency(amountValue, { cents: amountValue % 1 !== 0 })}
-            </Button>
-          </div>
-        </div>
-      ) : pendingSavings ? (
+        </p>
+      )}
+
+      {pendingSavings ? (
         /* A savings category with more than one goal: choose which goal this deposit lifts,
            so money never lands somewhere the couple never picked. One tap per goal logs it. */
         <div className="flex flex-col gap-3 motion-safe:animate-[pop-in_var(--dur)_var(--ease-spring)]">
@@ -557,7 +568,7 @@ export function QuickAdd({
                 variant="secondary"
                 fullWidth
                 disabled={saving}
-                onClick={() => void logWith(pendingSavings, '', goal.id)}
+                onClick={() => void logWith(pendingSavings, note, goal.id)}
               >
                 {titleCase(goal.name)}
               </Button>
@@ -567,7 +578,19 @@ export function QuickAdd({
             Back
           </Button>
         </div>
-      ) : pendingPackage ? null : (
+      ) : pendingPackage ? null : categories.length === 0 ? (
+        /* No categories at all (every one was deleted): teach the next step instead
+           of rendering an empty grid that looks broken. */
+        <div className="flex flex-col items-center gap-2 py-6 text-center">
+          <p className="text-callout text-ink-2">No categories yet, so there is nothing to tap.</p>
+          <Link
+            to="/budget"
+            className="text-callout font-medium text-accent-strong underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            Add categories on the Budget page
+          </Link>
+        </div>
+      ) : (
         /* Category tiles. Quiet until an amount is entered, then the thing to tap. A
            tile with a prepaid package stays live even without an amount: one tap uses
            a session at its known cost. */
@@ -630,30 +653,6 @@ export function QuickAdd({
           )}
         </div>
       )}
-
-      {!pending && !pendingPackage && !pendingSavings && (
-        <p aria-live="polite" className="min-h-[20px] text-center text-caption">
-          {errored ? (
-            <span className="text-danger">
-              {hasAmount ? (
-                <>
-                  Could not log that{' '}
-                  <span className="tnum">{formatCurrency(amountValue, { cents: amountValue % 1 !== 0 })}</span>. Tap the
-                  category to try again.
-                </>
-              ) : (
-                'Could not log that. Try again.'
-              )}
-            </span>
-          ) : savingsNotice ? (
-            <span className="text-muted">Add a savings goal in Settings first, then this will lift it.</span>
-          ) : result ? null : hasAmount ? (
-            <span className="text-muted">Tap a category to log it.</span>
-          ) : (
-            <span className="text-muted">Enter an amount, then tap a category.</span>
-          )}
-        </p>
-      )}
     </div>
   )
 }
@@ -661,7 +660,8 @@ export function QuickAdd({
 // One category tile: icon over a short label, tinted in the category color. Inert and
 // dimmed until an amount is ready, so the gesture reads as "type, then tap to log". A
 // tile holding a prepaid package shows its remaining sessions and stays tappable.
-function CategoryTile({
+// Memoized: an amount keystroke re-renders the field, not three pages of tiles.
+const CategoryTile = memo(function CategoryTile({
   category,
   disabled,
   saving,
@@ -692,7 +692,9 @@ function CategoryTile({
       )}
       style={{
         backgroundColor: `color-mix(in srgb, ${category.color} 13%, transparent)`,
-        color: category.color,
+        // Mixed toward ink so the lightest palette hues clear the graphics contrast
+        // floor on their own 13 percent tint, in both themes.
+        color: `color-mix(in srgb, ${category.color} 70%, var(--color-ink))`,
       }}
     >
       {packageLeft != null && (
@@ -713,4 +715,4 @@ function CategoryTile({
       </span>
     </button>
   )
-}
+})

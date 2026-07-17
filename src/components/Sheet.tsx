@@ -178,10 +178,18 @@ export function Sheet({ open, onClose, title, ariaLabel, children, footer }: She
         ref={dialogRef}
         tabIndex={-1}
         // While a pull-to-dismiss drag is in progress the panel follows the finger with no
-        // transition; releasing clears the offset so the CSS transition resumes.
-        style={dragOffset ? { transform: `translateY(${dragOffset}px)`, transition: 'none' } : undefined}
+        // transition; releasing clears the offset so the CSS transition resumes. When the
+        // software keyboard lifts the wrapper, also tighten the panel's own max-height by the
+        // keyboard height, so a tall sheet's title and close button stay on screen instead of
+        // sliding above the top edge (kbInset is 0 on desktop and when closed).
+        style={{
+          ...(dragOffset ? { transform: `translateY(${dragOffset}px)`, transition: 'none' } : undefined),
+          ...(kbInset
+            ? { maxHeight: `calc(100dvh - max(24px, env(safe-area-inset-top)) - ${kbInset}px)` }
+            : undefined),
+        }}
         className={cn(
-          'relative z-10 flex w-full flex-col bg-surface shadow-lg outline-none',
+          'card-surface relative z-10 flex w-full flex-col bg-surface shadow-lg outline-none',
           // The panel never grows past the viewport (minus the top safe area), so the
           // content scrolls internally while the body scroll stays locked.
           'max-h-[calc(100dvh-max(24px,env(safe-area-inset-top)))]',

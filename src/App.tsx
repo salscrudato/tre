@@ -7,11 +7,16 @@ import { AuthProvider } from './context/AuthContext'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { AppShell } from './components/AppShell'
 import { Splash } from './components/Splash'
+import { UpdatePrompt } from './components/UpdatePrompt'
 
 // Every route is code-split, so the initial load only pulls the shell and the
 // landing screen. Optimize (the AI page) and its dependencies load on demand.
-const Login = lazy(() => import('./routes/Login'))
-const Home = lazy(() => import('./routes/Home'))
+// The two entry screens start downloading with the boot instead of one render
+// round-trip later, so first paint never waits serially on a lazy chunk.
+const loginChunk = import('./routes/Login')
+const homeChunk = import('./routes/Home')
+const Login = lazy(() => loginChunk)
+const Home = lazy(() => homeChunk)
 const Spending = lazy(() => import('./routes/Spending'))
 const Budget = lazy(() => import('./routes/Budget'))
 const Income = lazy(() => import('./routes/Income'))
@@ -54,6 +59,8 @@ export default function App() {
               </Routes>
             </Suspense>
           </BrowserRouter>
+          {/* Portals to the body, so it rides above every screen when a deploy lands. */}
+          <UpdatePrompt />
         </AuthProvider>
       </QueryClientProvider>
     </ThemeProvider>

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CONFIG_STALE_TIME } from '../lib/queryClient'
+import { CONFIG_GC_TIME, CONFIG_STALE_TIME } from '../lib/queryClient'
 import type { Income } from '../types'
 import {
   createIncome,
@@ -17,7 +17,7 @@ const EMPTY_INCOMES = Object.freeze([]) as unknown as Income[]
 
 export function useIncomes() {
   const qc = useQueryClient()
-  const query = useQuery({ queryKey: KEY, queryFn: listIncomes, staleTime: CONFIG_STALE_TIME })
+  const query = useQuery({ queryKey: KEY, queryFn: listIncomes, staleTime: CONFIG_STALE_TIME, gcTime: CONFIG_GC_TIME })
   const invalidate = () => qc.invalidateQueries({ queryKey: KEY })
 
   const create = useMutation({

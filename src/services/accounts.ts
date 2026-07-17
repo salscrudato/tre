@@ -1,4 +1,4 @@
-import { deleteField, orderBy, updateDoc } from 'firebase/firestore'
+import { deleteField, updateDoc } from 'firebase/firestore'
 import type { Account } from '../types'
 import { createInCol, docRef, listCol, removeFromCol, updateInCol } from './firestore'
 
@@ -11,7 +11,9 @@ export type AccountPatch = Partial<Omit<Account, 'id' | 'houseAllocation'>> & {
   houseAllocation?: number | null
 }
 
-export const listAccounts = () => listCol<Account>(NAME, orderBy('name', 'asc'))
+// Unordered fetch with a client-side sort: Firestore drops any doc missing the
+// orderBy field, so a legacy doc without a name would silently vanish.
+export const listAccounts = async () => (await listCol<Account>(NAME)).sort((a, b) => a.name.localeCompare(b.name))
 
 export const createAccount = (data: AccountWrite) => {
   const clean: Record<string, unknown> = { ...data }

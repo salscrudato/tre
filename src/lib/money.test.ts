@@ -307,7 +307,7 @@ describe('projectedSavingsWithSchedule', () => {
   })
 
   it('uses the lower amount before the step and the higher amount after', () => {
-    // Sal-only 2,361 a month until September, then both incomes 7,061 a month.
+    // One income of 2,361 a month until September, then both incomes 7,061 a month.
     const stepped: ContributionSchedule = {
       monthlyNow: 2361,
       monthlyLater: 7061,

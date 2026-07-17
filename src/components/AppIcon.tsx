@@ -1,7 +1,10 @@
 // Full color app icon for Tre: the sprout mark on a green gradient. Source of the
 // PWA icon set. The brand hex values are intentional artwork, matching the green
 // token scale. A single rounded stem with two balanced leaves reads as new growth
-// and as three simple forms, our family of three.
+// and as three simple forms, a family of three.
+
+import { useId } from 'react'
+
 export function AppIcon({
   size = 512,
   className,
@@ -11,6 +14,9 @@ export function AppIcon({
   className?: string
   decorative?: boolean
 }) {
+  // A per-instance gradient id: two icons on one page (Login plus a Splash during a
+  // route transition) must not collide on a shared DOM id.
+  const gradientId = useId()
   return (
     <svg
       width={size}
@@ -23,12 +29,12 @@ export function AppIcon({
       className={className}
     >
       <defs>
-        <linearGradient id="treGrad" x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#37C871" />
           <stop offset="1" stopColor="#147A45" />
         </linearGradient>
       </defs>
-      <rect width="512" height="512" rx="112" fill="url(#treGrad)" />
+      <rect width="512" height="512" rx="112" fill={`url(#${gradientId})`} />
       <path
         d="M256 384 C 258 332, 252 300, 252 262"
         fill="none"
